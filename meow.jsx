@@ -59,6 +59,7 @@ const CHAT_STORAGE_KEY = "auto-chat";
 const LEGACY_CHAT_STORAGE_KEY = "meow-chat";
 const MEMORY_STORAGE_KEY = "auto-memory";
 const LEGACY_MEMORY_STORAGE_KEY = "meow-memory";
+const PDF_DOCS_STORAGE_KEY = "auto-pdf-docs";
 
 async function loadVal(key, legacyKey = null) {
   let value = "";
@@ -124,6 +125,27 @@ async function saveChat(msgs) {
   try { if (window.storage?.set) await window.storage.set(CHAT_STORAGE_KEY, json); } catch {}
   try { window.localStorage.setItem(CHAT_STORAGE_KEY, json); } catch {}
 }
+async function loadPdfDocs() {
+  try {
+    const raw = await loadVal(PDF_DOCS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch {}
+  return [];
+}
+async function savePdfDocs(docs) {
+  // Save metadata only (name, text, pageCount, pageImages) — NOT arrayBuffer (too large)
+  const toSave = docs.map(d => ({ name: d.name, text: d.text, pageCount: d.pageCount, pageImages: d.pageImages || [] }));
+  try {
+    const json = JSON.stringify(toSave);
+    await saveVal(PDF_DOCS_STORAGE_KEY, json);
+  } catch (e) {
+    console.warn("Failed to persist PDF docs:", e);
+  }
+}
+
 // ─── PDF Text Extraction (uses pdf.js loaded from CDN) ───
 async function extractPdfContent(arrayBuffer, fileName) {
   if (!window.pdfjsLib) throw new Error("PDF.js not loaded. Refresh the page.");
@@ -483,6 +505,7 @@ function Auto() {
   useEffect(() => {
     loadVal(MEMORY_STORAGE_KEY, LEGACY_MEMORY_STORAGE_KEY).then(v => { setMem(v || ""); setMemDraft(v || ""); });
     loadChat().then(v => { if (v?.length) setMsgs(v); });
+    loadPdfDocs().then(v => { if (v?.length) setPdfDocs(v); });
     // Auto-load previously downloaded local model
     (async () => {
       const savedId = await loadVal(LOCAL_MODEL_KEY);
@@ -796,8 +819,12 @@ function Auto() {
               if (prev.length >= MAX_ATTACHMENTS) return prev;
               return [...prev, { name: file.name, type: "application/pdf", content: text, size: file.size, isPdf: true, pageCount, pageImages }];
             });
-            // Store PDF data for viewer
-            setPdfDocs(prev => [...prev, { name: file.name, text, pageCount, pageImages, arrayBuffer: arrayBuffer.slice(0) }]);
+            // Store PDF data for viewer and persist to storage
+            setPdfDocs(prev => {
+              const next = [...prev, { name: file.name, text, pageCount, pageImages, arrayBuffer: arrayBuffer.slice(0) }];
+              savePdfDocs(next);
+              return next;
+            });
           } catch (err) {
             console.error("PDF extraction failed:", err);
             setErr(`Failed to process PDF "${file.name}": ${err.message}`);
@@ -902,7 +929,8 @@ When multiple documents are uploaded, you MUST perform systematic cross-referenc
     if (pdfDocs.length > 0) {
       s += `\n\n<documents>\nThe following documents have been uploaded for cross-referencing. ALWAYS cite these by name and page number:\n`;
       for (const doc of pdfDocs) {
-        s += `\n<document name="${doc.name}" pages="${doc.pageCount}">\n${doc.text}\n</document>\n`;
+        const docText = doc.text.length > 6000 ? doc.text.slice(0, 6000) + `\n...[truncated — ${doc.text.length} total chars, showing first 6000]` : doc.text;
+      s += `\n<document name="${doc.name}" pages="${doc.pageCount}">\n${docText}\n</document>\n`;
       }
       s += `</documents>`;
     }
@@ -1017,7 +1045,7 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
       const resp = await localEngineRef.current.chat.completions.create({
         messages: apiMsgs,
         temperature: 0.7,
-        max_tokens: 32768,
+        max_tokens: 4096,
       });
       const content = resp.choices?.[0]?.message?.content || "";
       return {
@@ -1040,7 +1068,7 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
           const resp = await localEngineRef.current.chat.completions.create({
             messages: apiMsgs,
             temperature: 0.7,
-            max_tokens: 32768,
+            max_tokens: 4096,
           });
           const content = resp.choices?.[0]?.message?.content || "";
           return {
@@ -1201,90 +1229,75 @@ If results are sparse or off-topic, say so clearly and note what is missing.`;
       if (mainData.usage) setUsage(p => ({ i: p.i + (mainData.usage.prompt_tokens || 0), o: p.o + (mainData.usage.completion_tokens || 0) }));
       let mainRaw = extractRaw(mainData);
 
-      // ─── STEP 4: Iterative Self-Reflection Loop (5 passes — ALWAYS runs) ───
-      let refinedRaw = mainRaw;
-      const REFLECTION_PASSES = 5;
-      const reflectionChecks = [
-        { name: "Accuracy & Factual Correctness", focus: "Check all factual claims, legislative references (SIS Act sections, regulations), dollar amounts, percentages, and dates. Flag anything that seems incorrect or unsupported. Verify any web research citations are accurate." },
-        { name: "Document Alignment & Page Citations", focus: "Verify EVERY claim references specific uploaded documents by name and page number using **[Document Name, Page X]** format. Add missing citations. Ensure no page reference is fabricated. Every statement about a document MUST have a page citation." },
-        { name: "Completeness & Depth", focus: "Check if any aspect of the user's question was missed or addressed superficially. Ensure ALL uploaded documents were consulted and referenced. Add any missing analysis. Check that the response structure includes Document Summary, Key Findings, Cross-Reference Analysis, Discrepancies, Compliance Notes, Recommendations, and References sections where appropriate." },
-        { name: "Cross-Reference Quality", focus: "Check cross-references BETWEEN documents. Are discrepancies between documents identified? Is the trust deed compared with the investment strategy? Are member statements reconciled with financial reports? Are compliance gaps between documents flagged? Create a Discrepancy Register if multiple documents are present." },
-        { name: "Final Polish & Coherence", focus: "Check overall structure, readability, logical flow, and professional tone. Ensure <expression> and <memory_update> tags are present and intact. Verify the response reads as authoritative SMSF expert advice that an auditor or advisor would find useful. Ensure a References section lists all cited pages." },
-      ];
+      if (!mainRaw || mainRaw.length < 5) {
+        throw new Error("The AI model returned an empty response. Try sending a shorter message, or reload the model from the sidebar.");
+      }
 
-      for (let pass = 0; pass < REFLECTION_PASSES; pass++) {
-        const check = reflectionChecks[pass];
-        setActivityStatus(`Self-review pass ${pass + 1}/${REFLECTION_PASSES}: ${check.name}...`);
+      // ─── STEP 4: Conditional Self-Reflection (only when PDF documents are present) ───
+      let finalRaw = mainRaw;
 
-        const reflectionSystem = `You are a self-reflection review agent (Pass ${pass + 1}/${REFLECTION_PASSES}: ${check.name}).
+      if (pdfDocs.length > 0 && mainRaw.length > 50) {
+        // Only run reflection for document analysis — simple chat skips this entirely
+        let refinedRaw = mainRaw;
+        const reflectionChecks = [
+          { name: "Accuracy & Citations", focus: "Check all factual claims, legislative references, dollar amounts, and dates. Verify EVERY claim references uploaded documents by name and page number using **[Document Name, Page X]** format. Add missing citations. Ensure no page reference is fabricated." },
+          { name: "Completeness & Polish", focus: "Check if any aspect of the user's question was missed. Ensure ALL uploaded documents were consulted. Check cross-references BETWEEN documents. Verify <expression> and <memory_update> tags are present and intact. Ensure the response is well-structured and professional." },
+        ];
+
+        for (let pass = 0; pass < reflectionChecks.length; pass++) {
+          const check = reflectionChecks[pass];
+          setActivityStatus(`Self-review ${pass + 1}/${reflectionChecks.length}: ${check.name}...`);
+
+          const reflectionSystem = `You are a self-reflection review agent (Pass ${pass + 1}/${reflectionChecks.length}: ${check.name}).
 
 Your task: Review the draft response below and IMPROVE it based on this specific focus area:
 **${check.focus}**
 
 Context:
 - The user asked: "${txt || "See attached files"}"
-- The response should be an expert SMSF cross-referencing analysis with perfect page citations
-${reviewerFindings.length > 0 ? `- Web research was conducted: ${reviewerFindings.map(r => r.question).join("; ")}` : "- No web research was conducted"}
 
 Rules:
 1. Output the COMPLETE improved response (not just corrections)
 2. PRESERVE ALL tags exactly: <expression>, <memory_update> blocks
 3. If the response is already excellent for this check, output it unchanged
-4. Make ONLY improvements related to your focus area — do not degrade other aspects
-5. Every document reference MUST include page numbers in **[Document Name, Page X]** format
-6. Think carefully about whether each part of the response is actually correct and well-supported`;
+4. Every document reference MUST include page numbers in **[Document Name, Page X]** format`;
 
-        const reflectionMsgs = [
-          { role: "system", content: reflectionSystem },
-          { role: "user", content: `Draft response to review and improve:\n\n${refinedRaw}` },
+          const reflectionMsgs = [
+            { role: "system", content: reflectionSystem },
+            { role: "user", content: `Draft response to review and improve:\n\n${refinedRaw}` },
+          ];
+
+          try {
+            const { data: reflectData } = await callAI(reflectionMsgs);
+            if (reflectData.usage) setUsage(p => ({ i: p.i + (reflectData.usage.prompt_tokens || 0), o: p.o + (reflectData.usage.completion_tokens || 0) }));
+            const reflectRaw = extractRaw(reflectData);
+            if (reflectRaw.length > 50 && (!refinedRaw.includes("<memory_update>") || reflectRaw.includes("<memory_update>"))) {
+              refinedRaw = reflectRaw;
+            }
+          } catch (reflectErr) {
+            console.warn(`Reflection pass ${pass + 1} failed:`, reflectErr);
+          }
+        }
+
+        // ─── STEP 5: Post-Creation Verification ───
+        setActivityStatus("Final verification...");
+        const verifyMsgs = [
+          { role: "system", content: `You are a final quality gate. Check this SMSF response: Are document references accurate with **[Document Name, Page X]** format? Any gaps or issues? If quality is high, output EXACTLY as-is. If issues found, fix and output corrected version. PRESERVE ALL tags (<expression>, <memory_update>).` },
+          { role: "user", content: `User asked: "${txt || "See attached files"}"\n\nResponse to verify:\n${refinedRaw}` },
         ];
 
         try {
-          const { data: reflectData } = await callAI(reflectionMsgs);
-          if (reflectData.usage) setUsage(p => ({ i: p.i + (reflectData.usage.prompt_tokens || 0), o: p.o + (reflectData.usage.completion_tokens || 0) }));
-          const reflectRaw = extractRaw(reflectData);
-          // Sanity check: keep memory_update tag integrity
-          if (reflectRaw.length > 50 && (!refinedRaw.includes("<memory_update>") || reflectRaw.includes("<memory_update>"))) {
-            refinedRaw = reflectRaw;
+          const { data: verifyData } = await callAI(verifyMsgs);
+          if (verifyData.usage) setUsage(p => ({ i: p.i + (verifyData.usage.prompt_tokens || 0), o: p.o + (verifyData.usage.completion_tokens || 0) }));
+          const verifyRaw = extractRaw(verifyData);
+          if (verifyRaw.length > 50 && (!refinedRaw.includes("<memory_update>") || verifyRaw.includes("<memory_update>"))) {
+            finalRaw = verifyRaw;
+          } else {
+            finalRaw = refinedRaw;
           }
-        } catch (reflectErr) {
-          console.warn(`Reflection pass ${pass + 1} failed:`, reflectErr);
-          // Continue with current refined version
+        } catch {
+          finalRaw = refinedRaw;
         }
-      }
-
-      // ─── STEP 5: Post-Creation Verification — "Did I do good work?" ───
-      setActivityStatus("Final verification: checking quality of work...");
-      const verificationSystem = `You are a final quality gate for an SMSF expert assistant. Answer ONE question: "Did I do good work?"
-
-Review this SMSF expert response and check:
-1. Does it FULLY answer the user's question with no gaps?
-2. Are ALL document references accurate with specific page numbers in **[Document Name, Page X]** format?
-3. Are there any compliance issues, misleading statements, or incorrect legislative references?
-4. Is the cross-referencing between documents thorough and systematic?
-5. Would a professional SMSF auditor or financial advisor find this useful, accurate, and complete?
-6. Is the response structured properly with clear sections?
-7. Are all <expression> and <memory_update> tags present and intact?
-
-If YES (quality is high): Output the response EXACTLY as-is — do not change a single character.
-If NO (there are problems): Fix the specific issues and output the corrected version.
-CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly. Think carefully about whether the work is actually good.`;
-
-      const verifyMsgs = [
-        { role: "system", content: verificationSystem },
-        { role: "user", content: `User asked: "${txt || "See attached files"}"\n\nFinal response to verify:\n${refinedRaw}` },
-      ];
-
-      let finalRaw = refinedRaw;
-      try {
-        const { data: verifyData } = await callAI(verifyMsgs);
-        if (verifyData.usage) setUsage(p => ({ i: p.i + (verifyData.usage.prompt_tokens || 0), o: p.o + (verifyData.usage.completion_tokens || 0) }));
-        const verifyRaw = extractRaw(verifyData);
-        if (verifyRaw.length > 50 && (!refinedRaw.includes("<memory_update>") || verifyRaw.includes("<memory_update>"))) {
-          finalRaw = verifyRaw;
-        }
-      } catch {
-        finalRaw = refinedRaw; // Fall back to refined response on verification error
       }
 
       // ─── Finalise: parse response and update state ───
@@ -1332,7 +1345,7 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly. Think caref
     return "./Expressions/Happy.png";
   }, [isBlinking, busy, expression]);
 
-  const clearChat = () => { setMsgs([]); saveChat([]); clearVal(LEGACY_CHAT_STORAGE_KEY); setErr(null); };
+  const clearChat = () => { setMsgs([]); saveChat([]); clearVal(LEGACY_CHAT_STORAGE_KEY); setPdfDocs([]); savePdfDocs([]); setErr(null); };
   const ft = n => n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"K" : String(n);
 
   // ═══ RENDER ═══
@@ -1628,7 +1641,36 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly. Think caref
                       />
                     )}
                     <div style={{ background: m.role === "user" ? "rgba(124,224,138,0.08)" : "rgba(255,255,255,0.02)", border: "1px solid var(--bd)", borderRadius: "10px", padding: "10px 12px", minWidth: 0 }}>
-                      {m.role === "assistant" ? <Md text={m.content} /> : <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{m.content}</div>}
+                      {m.role === "assistant" ? <Md text={m.content} /> : (() => {
+                        // Split user message to show file attachments as visual chips
+                        const sep = "\n\n---\n**Attached files:**\n";
+                        const sepIdx = typeof m.content === "string" ? m.content.indexOf(sep) : -1;
+                        if (sepIdx < 0) return <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{m.content}</div>;
+                        const textPart = m.content.slice(0, sepIdx).trim();
+                        const fileBlock = m.content.slice(sepIdx + sep.length);
+                        // Extract file names from **[File: name]** or **[Image: name]** patterns
+                        const fileNames = [...fileBlock.matchAll(/\*\*\[(File|Image|PDF):\s*([^\]]+)\]\*\*/g)].map(fm => ({ type: fm[1], name: fm[2].trim() }));
+                        return (
+                          <div>
+                            {textPart && <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{textPart}</div>}
+                            {fileNames.length > 0 && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginTop: textPart ? "6px" : "0" }}>
+                                {fileNames.map((f, fi) => (
+                                  <span key={fi} style={{
+                                    display: "inline-flex", alignItems: "center", gap: "4px",
+                                    padding: "2px 8px", borderRadius: "5px", fontSize: "10px", fontFamily: "var(--m)",
+                                    background: f.type === "Image" ? "rgba(136,187,204,0.1)" : "rgba(124,224,138,0.08)",
+                                    border: `1px solid ${f.type === "Image" ? "rgba(136,187,204,0.2)" : "rgba(124,224,138,0.15)"}`,
+                                    color: f.type === "Image" ? "var(--ac2)" : "var(--ac)",
+                                  }}>
+                                    {f.name.toLowerCase().endsWith(".pdf") ? "\uD83D\uDCDA" : f.type === "Image" ? "\uD83D\uDDBC" : "\uD83D\uDCC4"} {f.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );
