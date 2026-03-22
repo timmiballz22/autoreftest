@@ -14,6 +14,16 @@ window.addEventListener("error", (event) => {
 const GROQ_API = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "qwen/qwen3-32b";
 
+// ─── Local Model Config ───
+const LOCAL_MODEL_KEY = "auto-local-model-id";
+const LOCAL_MODELS = [
+  { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", name: "Qwen 2.5 0.5B", size: "~400MB", desc: "Fastest, lowest quality" },
+  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", name: "Qwen 2.5 1.5B", size: "~1GB", desc: "Balanced speed/quality" },
+  { id: "Llama-3.2-1B-Instruct-q4f32_1-MLC", name: "Llama 3.2 1B", size: "~800MB", desc: "Fast, decent quality" },
+  { id: "Llama-3.2-3B-Instruct-q4f16_1-MLC", name: "Llama 3.2 3B", size: "~2GB", desc: "Good quality" },
+  { id: "Phi-3.5-mini-instruct-q4f16_1-MLC", name: "Phi 3.5 Mini", size: "~2.3GB", desc: "Best quality" },
+];
+
 // ─── Persistent Storage ───
 const CHAT_STORAGE_KEY = "auto-chat";
 const LEGACY_CHAT_STORAGE_KEY = "meow-chat";
@@ -236,6 +246,13 @@ function Auto() {
   const msgsRef = useRef([]);
   const memRef = useRef("");
   const busyRef = useRef(false);
+  const localEngineRef = useRef(null);
+  const [localModelId, setLocalModelId] = useState(LOCAL_MODELS[0].id);
+  // idle | cached | downloading | loading | ready | error | exportDone
+  const [localModelStatus, setLocalModelStatus] = useState("idle");
+  const [localModelProgress, setLocalModelProgress] = useState(0);
+  const [localModelProgressText, setLocalModelProgressText] = useState("");
+  const [useLocalModel, setUseLocalModel] = useState(false);
 
   const promptForGroqKey = useCallback((reason = "Enter your Groq API key:") => {
     const enteredKey = window.prompt(reason);
@@ -256,6 +273,14 @@ function Auto() {
       const storedGroqKey = await loadGroqKey();
       if (storedGroqKey) { setGroqApiKey(storedGroqKey); return; }
       promptForGroqKey();
+    })();
+    // Check if a local model was previously downloaded
+    (async () => {
+      const savedId = await loadVal(LOCAL_MODEL_KEY);
+      if (savedId && LOCAL_MODELS.find(m => m.id === savedId)) {
+        setLocalModelId(savedId);
+        setLocalModelStatus("cached");
+      }
     })();
   }, [promptForGroqKey]);
 
@@ -347,6 +372,161 @@ function Auto() {
       r.readAsText(f);
     }; inp.click();
   };
+
+  // ─── Local Model helpers ───
+  const downloadLocalModel = useCallback(async () => {
+    if (!navigator.gpu) {
+      setLocalModelStatus("error");
+      setLocalModelProgressText("WebGPU not available. Use Chrome 113+ or Edge 113+.");
+      return;
+    }
+    setLocalModelStatus("downloading");
+    setLocalModelProgress(0);
+    setLocalModelProgressText("Fetching WebLLM...");
+    try {
+      const webllm = await import("https://esm.run/@mlc-ai/web-llm");
+      const engine = await webllm.CreateMLCEngine(localModelId, {
+        initProgressCallback: (p) => {
+          setLocalModelProgress(Math.round((p.progress || 0) * 100));
+          setLocalModelProgressText(p.text || "");
+        },
+      });
+      localEngineRef.current = engine;
+      setLocalModelStatus("ready");
+      setUseLocalModel(true);
+      saveVal(LOCAL_MODEL_KEY, localModelId);
+    } catch (e) {
+      console.error("Local model download failed:", e);
+      setLocalModelStatus("error");
+      setLocalModelProgressText(e.message || "Download failed");
+    }
+  }, [localModelId]);
+
+  const loadLocalModel = useCallback(async () => {
+    if (!navigator.gpu) {
+      setLocalModelStatus("error");
+      setLocalModelProgressText("WebGPU not available. Use Chrome 113+ or Edge 113+.");
+      return;
+    }
+    setLocalModelStatus("loading");
+    setLocalModelProgress(0);
+    setLocalModelProgressText("Loading from cache...");
+    try {
+      const webllm = await import("https://esm.run/@mlc-ai/web-llm");
+      const engine = await webllm.CreateMLCEngine(localModelId, {
+        initProgressCallback: (p) => {
+          setLocalModelProgress(Math.round((p.progress || 0) * 100));
+          setLocalModelProgressText(p.text || "");
+        },
+      });
+      localEngineRef.current = engine;
+      setLocalModelStatus("ready");
+    } catch (e) {
+      console.error("Local model load failed:", e);
+      setLocalModelStatus("error");
+      setLocalModelProgressText(e.message || "Load failed");
+    }
+  }, [localModelId]);
+
+  const deleteLocalModel = useCallback(async () => {
+    if (!window.confirm(`Delete cached model "${localModelId}"? You will need to re-download it to use it again.`)) return;
+    try {
+      localEngineRef.current = null;
+      setUseLocalModel(false);
+      // Remove from all caches
+      const cacheKeys = await caches.keys();
+      let deleted = 0;
+      const baseId = localModelId.replace(/-MLC$/, "");
+      for (const cacheName of cacheKeys) {
+        const cache = await caches.open(cacheName);
+        const reqs = await cache.keys();
+        for (const req of reqs) {
+          if (req.url.includes(localModelId) || req.url.includes(baseId)) {
+            await cache.delete(req);
+            deleted++;
+          }
+        }
+      }
+      setLocalModelStatus("idle");
+      setLocalModelProgress(0);
+      setLocalModelProgressText("");
+      clearVal(LOCAL_MODEL_KEY);
+    } catch (e) {
+      setLocalModelStatus("error");
+      setLocalModelProgressText("Delete failed: " + e.message);
+    }
+  }, [localModelId]);
+
+  const exportLocalModel = useCallback(async () => {
+    setLocalModelProgressText("Scanning cache...");
+    try {
+      const cacheKeys = await caches.keys();
+      const baseId = localModelId.replace(/-MLC$/, "");
+      // Collect all matching cache entries
+      const entries = [];
+      for (const cacheName of cacheKeys) {
+        const cache = await caches.open(cacheName);
+        const reqs = await cache.keys();
+        for (const req of reqs) {
+          if (req.url.includes(localModelId) || req.url.includes(baseId)) {
+            entries.push({ req, cacheName });
+          }
+        }
+      }
+      if (entries.length === 0) {
+        setLocalModelProgressText("No cached files found for this model.");
+        return;
+      }
+      // Use File System Access API if available (Chrome/Edge)
+      if (window.showDirectoryPicker) {
+        const dirHandle = await window.showDirectoryPicker({ mode: "readwrite" }).catch(e => {
+          if (e.name === "AbortError") return null;
+          throw e;
+        });
+        if (!dirHandle) { setLocalModelProgressText("Export cancelled."); return; }
+        let saved = 0;
+        for (const { req, cacheName } of entries) {
+          const cache = await caches.open(cacheName);
+          const resp = await cache.match(req);
+          if (!resp) continue;
+          const blob = await resp.blob();
+          const rawName = decodeURIComponent(req.url.split("/").pop().split("?")[0]) || `model-part-${saved}`;
+          const fileHandle = await dirHandle.getFileHandle(rawName, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          saved++;
+          setLocalModelProgressText(`Saved ${saved}/${entries.length} files...`);
+        }
+        setLocalModelStatus("exportDone");
+        setLocalModelProgressText(`Exported ${saved} files to folder.`);
+      } else {
+        // Fallback: individual file downloads
+        let i = 0;
+        for (const { req, cacheName } of entries) {
+          const cache = await caches.open(cacheName);
+          const resp = await cache.match(req);
+          if (!resp) continue;
+          const blob = await resp.blob();
+          const rawName = decodeURIComponent(req.url.split("/").pop().split("?")[0]) || `model-part-${i}`;
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = rawName;
+          a.click();
+          await new Promise(r => setTimeout(r, 600));
+          URL.revokeObjectURL(a.href);
+          i++;
+          setLocalModelProgressText(`Downloading ${i}/${entries.length}...`);
+        }
+        setLocalModelStatus("exportDone");
+        setLocalModelProgressText(`Exported ${i} files.`);
+      }
+    } catch (e) {
+      if (e.name === "AbortError") { setLocalModelProgressText("Export cancelled."); return; }
+      console.error("Export failed:", e);
+      setLocalModelProgressText("Export failed: " + e.message);
+    }
+  }, [localModelId]);
 
   // ─── Search handler ───
   // ─── Attachment handling ───
@@ -496,6 +676,31 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
 
   // ─── Call AI API ───
   const callAI = useCallback(async (apiMsgs, groqKey) => {
+    // Use local model if active and engine is loaded
+    if (useLocalModel && localEngineRef.current) {
+      try {
+        const resp = await localEngineRef.current.chat.completions.create({
+          messages: apiMsgs,
+          temperature: 0.7,
+          max_tokens: 2048,
+        });
+        const content = resp.choices?.[0]?.message?.content || "";
+        return {
+          data: {
+            choices: [{ message: { content } }],
+            usage: {
+              prompt_tokens: resp.usage?.prompt_tokens || 0,
+              completion_tokens: resp.usage?.completion_tokens || 0,
+            },
+          },
+          usedModel: localModelId,
+        };
+      } catch (e) {
+        if (e.name === "AbortError") throw e;
+        throw new Error(`Local model error: ${e.message}`);
+      }
+    }
+
     const buildBody = (model) => ({ model, messages: apiMsgs });
     let data = null;
     let usedModel = GROQ_MODEL;
@@ -547,7 +752,7 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
 
     if (!data) throw lastErr || new Error("Failed to get a completion.");
     return { data, usedModel };
-  }, []);
+  }, [useLocalModel, localModelId]);
 
   // ─── Main send function with research loop ───
   const send = useCallback(async () => {
@@ -578,10 +783,13 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
     saveChat(currentMsgs);
 
     try {
-      let groqKey = (groqApiKey || readEnvGroqKey() || (await loadGroqKey()) || "").trim();
-      if (!groqKey) {
-        groqKey = promptForGroqKey("Missing API key. Enter your Groq API key:");
-        if (!groqKey) throw new Error("Missing API key.");
+      let groqKey = "";
+      if (!useLocalModel || !localEngineRef.current) {
+        groqKey = (groqApiKey || readEnvGroqKey() || (await loadGroqKey()) || "").trim();
+        if (!groqKey) {
+          groqKey = promptForGroqKey("Missing API key. Enter your Groq API key:");
+          if (!groqKey) throw new Error("Missing API key.");
+        }
       }
 
       abortRef.current = new AbortController();
@@ -668,7 +876,7 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
       setActivityStatus("");
       abortRef.current = null;
     }
-  }, [input, msgs, busy, buildSystem, parseResponse, callAI, groqApiKey, promptForGroqKey, attachments]);
+  }, [input, msgs, busy, buildSystem, parseResponse, callAI, groqApiKey, promptForGroqKey, attachments, useLocalModel]);
 
   // ─── Expression image resolver — blink overrides all other states ───
   const getExprImg = useCallback((speakingOverride = false) => {
@@ -727,6 +935,106 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
             </div>
           )}
 
+          {/* ─── Local Model Section ─── */}
+          <div style={{ borderTop: "1px solid var(--bd)", flexShrink: 0 }}>
+            <div style={{ padding: "8px 12px 4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ fontSize: "11px" }}>🤖</span>
+                <span style={{ fontWeight: 700, fontSize: "11px" }}>Local Model</span>
+                {localModelStatus === "ready" && (
+                  <span style={{ fontSize: "9px", color: "var(--ac)", fontFamily: "var(--m)", padding: "1px 5px", borderRadius: "3px", background: "rgba(124,224,138,0.1)", border: "1px solid rgba(124,224,138,0.2)" }}>READY</span>
+                )}
+                {localModelStatus === "cached" && (
+                  <span style={{ fontSize: "9px", color: "var(--ac2)", fontFamily: "var(--m)", padding: "1px 5px", borderRadius: "3px", background: "rgba(136,187,204,0.1)", border: "1px solid rgba(136,187,204,0.2)" }}>CACHED</span>
+                )}
+              </div>
+              {localModelStatus === "ready" && (
+                <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", userSelect: "none" }}>
+                  <input
+                    type="checkbox"
+                    checked={useLocalModel}
+                    onChange={e => setUseLocalModel(e.target.checked)}
+                    style={{ margin: 0, accentColor: "var(--ac)" }}
+                  />
+                  <span style={{ fontSize: "9px", color: useLocalModel ? "var(--ac)" : "var(--dm)", fontFamily: "var(--m)" }}>{useLocalModel ? "ACTIVE" : "OFF"}</span>
+                </label>
+              )}
+            </div>
+
+            <div style={{ padding: "0 10px 10px", display: "flex", flexDirection: "column", gap: "6px" }}>
+              {/* Model selector */}
+              <select
+                value={localModelId}
+                onChange={e => { setLocalModelId(e.target.value); setLocalModelStatus("idle"); setLocalModelProgress(0); setLocalModelProgressText(""); localEngineRef.current = null; setUseLocalModel(false); }}
+                disabled={localModelStatus === "downloading" || localModelStatus === "loading" || localModelStatus === "ready"}
+                style={{ width: "100%", padding: "5px 8px", background: "#101018", border: "1px solid var(--bd)", color: "var(--tx)", borderRadius: "5px", fontSize: "11px", fontFamily: "var(--m)", cursor: "pointer" }}
+              >
+                {LOCAL_MODELS.map(m => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.size}) — {m.desc}</option>
+                ))}
+              </select>
+
+              {/* Progress bar */}
+              {(localModelStatus === "downloading" || localModelStatus === "loading") && (
+                <div>
+                  <div style={{ height: "4px", background: "var(--bd)", borderRadius: "2px", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${localModelProgress}%`, background: "linear-gradient(90deg, var(--ac), var(--ac2))", borderRadius: "2px", transition: "width 0.3s ease" }} />
+                  </div>
+                  <div style={{ fontSize: "9px", color: "var(--dm)", marginTop: "3px", fontFamily: "var(--m)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {localModelProgress}% — {localModelProgressText}
+                  </div>
+                </div>
+              )}
+
+              {/* Status/error messages */}
+              {localModelStatus === "error" && (
+                <div style={{ fontSize: "9px", color: "var(--dg)", fontFamily: "var(--m)", lineHeight: 1.5 }}>{localModelProgressText}</div>
+              )}
+              {localModelStatus === "exportDone" && (
+                <div style={{ fontSize: "9px", color: "var(--ac)", fontFamily: "var(--m)" }}>{localModelProgressText}</div>
+              )}
+
+              {/* Action buttons */}
+              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                {(localModelStatus === "idle" || localModelStatus === "error") && (
+                  <button onClick={downloadLocalModel} style={btn("#7ce08a")}>Download</button>
+                )}
+                {localModelStatus === "cached" && (
+                  <>
+                    <button onClick={loadLocalModel} style={btn("#7ce08a")}>Load</button>
+                    <button onClick={downloadLocalModel} style={btn("#88bbcc")}>Re-download</button>
+                  </>
+                )}
+                {localModelStatus === "ready" && (
+                  <>
+                    <button onClick={exportLocalModel} style={btn("#88bbcc")}>Export LLM</button>
+                    <button onClick={deleteLocalModel} style={btn("#cc7777")}>Delete</button>
+                  </>
+                )}
+                {(localModelStatus === "exportDone") && (
+                  <>
+                    <button onClick={exportLocalModel} style={btn("#88bbcc")}>Export Again</button>
+                    <button onClick={deleteLocalModel} style={btn("#cc7777")}>Delete</button>
+                  </>
+                )}
+                {(localModelStatus === "downloading" || localModelStatus === "loading") && (
+                  <span style={{ fontSize: "10px", color: "var(--dm)", fontFamily: "var(--m)", padding: "4px 0" }}>
+                    {localModelStatus === "downloading" ? "Downloading…" : "Loading from cache…"}
+                  </span>
+                )}
+              </div>
+
+              {/* WebGPU warning */}
+              {!navigator.gpu && (
+                <div style={{ fontSize: "9px", color: "#cc8855", fontFamily: "var(--m)" }}>⚠ WebGPU not detected — requires Chrome 113+ or Edge 113+</div>
+              )}
+
+              <div style={{ fontSize: "9px", color: "var(--dm)", fontFamily: "var(--m)", lineHeight: 1.5 }}>
+                Runs fully offline after download. Model cached in browser.
+              </div>
+            </div>
+          </div>
+
         </div>
       )}
 
@@ -742,16 +1050,25 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
               onError={(e) => { e.target.style.display = "none"; }}
             />
             <span style={{ fontWeight: 800, fontSize: "15px", letterSpacing: "-0.4px" }}>Auto</span>
-            <span style={{ fontSize: "10px", color: "var(--dm)", fontFamily: "var(--m)" }}>Groq (qwen3-32b)</span>
+            <span style={{ fontSize: "10px", color: useLocalModel && localModelStatus === "ready" ? "var(--ac)" : "var(--dm)", fontFamily: "var(--m)" }}>
+              {useLocalModel && localModelStatus === "ready"
+                ? `Local (${LOCAL_MODELS.find(m => m.id === localModelId)?.name || localModelId})`
+                : "Groq (qwen3-32b)"}
+            </span>
           </div>
           <div style={{ display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              onClick={() => promptForGroqKey("Set or update your Groq API key:")}
-              style={{ ...hdr(), fontSize: "10px", fontFamily: "var(--m)", color: groqApiKey ? "var(--ac2)" : "var(--dg)", borderColor: groqApiKey ? "rgba(136,187,204,0.2)" : "rgba(204,119,119,0.2)" }}
-              title={groqApiKey ? "Groq API key set" : "Groq API key missing"}
-            >
-              {groqApiKey ? "GROQ ✓" : "GROQ !"}
-            </button>
+            {useLocalModel && localModelStatus === "ready" ? (
+              <span style={{ ...hdr(), fontSize: "10px", fontFamily: "var(--m)", color: "var(--ac)", borderColor: "rgba(124,224,138,0.2)", display: "inline-block" }}
+                title="Using local offline model">LOCAL ✓</span>
+            ) : (
+              <button
+                onClick={() => promptForGroqKey("Set or update your Groq API key:")}
+                style={{ ...hdr(), fontSize: "10px", fontFamily: "var(--m)", color: groqApiKey ? "var(--ac2)" : "var(--dg)", borderColor: groqApiKey ? "rgba(136,187,204,0.2)" : "rgba(204,119,119,0.2)" }}
+                title={groqApiKey ? "Groq API key set" : "Groq API key missing"}
+              >
+                {groqApiKey ? "GROQ ✓" : "GROQ !"}
+              </button>
+            )}
             <span style={{ fontSize: "9px", color: "var(--dm)", fontFamily: "var(--m)", padding: "2px 6px", background: "rgba(255,255,255,0.02)", borderRadius: "3px" }}>↑{ft(usage.i)} ↓{ft(usage.o)}</span>
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
