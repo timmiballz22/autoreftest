@@ -17,11 +17,36 @@ const GROQ_MODEL = "qwen/qwen3-32b";
 // ─── Local Model Config ───
 const LOCAL_MODEL_KEY = "auto-local-model-id";
 const LOCAL_MODELS = [
-  { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", name: "Qwen 2.5 0.5B", size: "~400MB", desc: "Fastest, lowest quality" },
-  { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", name: "Qwen 2.5 1.5B", size: "~1GB", desc: "Balanced speed/quality" },
-  { id: "Llama-3.2-1B-Instruct-q4f32_1-MLC", name: "Llama 3.2 1B", size: "~800MB", desc: "Fast, decent quality" },
-  { id: "Llama-3.2-3B-Instruct-q4f16_1-MLC", name: "Llama 3.2 3B", size: "~2GB", desc: "Good quality" },
-  { id: "Phi-3.5-mini-instruct-q4f16_1-MLC", name: "Phi 3.5 Mini", size: "~2.3GB", desc: "Best quality" },
+  {
+    id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC",
+    tier: "Light", color: "#7ce08a",
+    name: "Qwen 2.5 0.5B",
+    size: "~400MB",
+    vram: "1GB VRAM",
+    ram: "2GB RAM",
+    cpu: "Any CPU",
+    desc: "Fastest. Basic quality. Works on low-end hardware.",
+  },
+  {
+    id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+    tier: "Medium", color: "#88bbcc",
+    name: "Llama 3.2 3B",
+    size: "~2GB",
+    vram: "3GB VRAM",
+    ram: "4GB RAM",
+    cpu: "Modern multi-core",
+    desc: "Balanced speed and quality.",
+  },
+  {
+    id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
+    tier: "Heavy", color: "#cc9955",
+    name: "Phi 3.5 Mini",
+    size: "~2.3GB",
+    vram: "4GB VRAM",
+    ram: "6GB RAM",
+    cpu: "Modern GPU recommended",
+    desc: "Best quality. Slower on weak hardware.",
+  },
 ];
 
 // ─── Persistent Storage ───
@@ -962,17 +987,51 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
             </div>
 
             <div style={{ padding: "0 10px 10px", display: "flex", flexDirection: "column", gap: "6px" }}>
-              {/* Model selector */}
-              <select
-                value={localModelId}
-                onChange={e => { setLocalModelId(e.target.value); setLocalModelStatus("idle"); setLocalModelProgress(0); setLocalModelProgressText(""); localEngineRef.current = null; setUseLocalModel(false); }}
-                disabled={localModelStatus === "downloading" || localModelStatus === "loading" || localModelStatus === "ready"}
-                style={{ width: "100%", padding: "5px 8px", background: "#101018", border: "1px solid var(--bd)", color: "var(--tx)", borderRadius: "5px", fontSize: "11px", fontFamily: "var(--m)", cursor: "pointer" }}
-              >
-                {LOCAL_MODELS.map(m => (
-                  <option key={m.id} value={m.id}>{m.name} ({m.size}) — {m.desc}</option>
-                ))}
-              </select>
+              {/* Tier cards */}
+              {LOCAL_MODELS.map(m => {
+                const locked = localModelStatus === "downloading" || localModelStatus === "loading" || localModelStatus === "ready";
+                const selected = localModelId === m.id;
+                return (
+                  <div
+                    key={m.id}
+                    onClick={() => {
+                      if (locked) return;
+                      setLocalModelId(m.id);
+                      setLocalModelStatus("idle");
+                      setLocalModelProgress(0);
+                      setLocalModelProgressText("");
+                      localEngineRef.current = null;
+                      setUseLocalModel(false);
+                    }}
+                    style={{
+                      border: `1px solid ${selected ? m.color + "55" : "var(--bd)"}`,
+                      borderRadius: "7px",
+                      padding: "7px 9px",
+                      background: selected ? m.color + "0d" : "rgba(255,255,255,0.01)",
+                      cursor: locked ? "default" : "pointer",
+                      opacity: locked && !selected ? 0.45 : 1,
+                      transition: "border-color 0.15s, background 0.15s",
+                    }}
+                  >
+                    {/* Tier + model name row */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                      <span style={{ fontWeight: 700, fontSize: "10px", color: m.color, fontFamily: "var(--m)", letterSpacing: "0.5px" }}>{m.tier.toUpperCase()}</span>
+                      <span style={{ fontSize: "10px", color: "var(--tx)", fontWeight: 600 }}>{m.name}</span>
+                      <span style={{ fontSize: "9px", color: "var(--dm)", fontFamily: "var(--m)", marginLeft: "auto" }}>{m.size}</span>
+                    </div>
+                    {/* Spec chips */}
+                    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                      {[m.vram, m.ram, m.cpu].map(spec => (
+                        <span key={spec} style={{ fontSize: "8.5px", color: selected ? m.color : "var(--dm)", fontFamily: "var(--m)", padding: "1px 5px", borderRadius: "3px", background: selected ? m.color + "15" : "rgba(255,255,255,0.03)", border: `1px solid ${selected ? m.color + "30" : "rgba(255,255,255,0.05)"}` }}>
+                          {spec}
+                        </span>
+                      ))}
+                    </div>
+                    {/* Desc */}
+                    <div style={{ fontSize: "9px", color: "var(--dm)", marginTop: "4px", lineHeight: 1.4 }}>{m.desc}</div>
+                  </div>
+                );
+              })}
 
               {/* Progress bar */}
               {(localModelStatus === "downloading" || localModelStatus === "loading") && (
