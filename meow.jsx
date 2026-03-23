@@ -31,6 +31,9 @@ const LOCAL_MODELS = [
     ram: "2GB RAM",
     cpu: "Any CPU",
     desc: "Fastest. Basic quality. Works on low-end hardware.",
+    contextWindow: 32768,
+    slidingWindow: 32768,
+    prefillChunk: 2048,
   },
   {
     id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
@@ -41,6 +44,9 @@ const LOCAL_MODELS = [
     ram: "4GB RAM",
     cpu: "Modern multi-core",
     desc: "Balanced speed and quality.",
+    contextWindow: 131072,
+    slidingWindow: 131072,
+    prefillChunk: 4096,
   },
   {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
@@ -51,8 +57,105 @@ const LOCAL_MODELS = [
     ram: "6GB RAM",
     cpu: "Modern GPU recommended",
     desc: "Best quality. Slower on weak hardware.",
+    contextWindow: 131072,
+    slidingWindow: 131072,
+    prefillChunk: 4096,
   },
 ];
+
+// ─── Build WebLLM engine config with expanded context window ───
+function buildEngineConfig(modelId) {
+  const modelDef = LOCAL_MODELS.find(m => m.id === modelId);
+  if (!modelDef) return {};
+  return {
+    model_list: [{
+      model: `https://huggingface.co/mlc-ai/${modelId}`,
+      model_id: modelId,
+      model_lib: modelId,
+      overrides: {
+        context_window_size: modelDef.contextWindow,
+        sliding_window_size: modelDef.slidingWindow,
+        prefill_chunk_size: modelDef.prefillChunk,
+      },
+    }],
+  };
+}
+
+// ─── Estimate token count from text (rough ~3.8 chars per token) ───
+function estimateTokens(text) {
+  if (!text) return 0;
+  return Math.ceil(text.length / 3.8);
+}
+
+// ─── Get current model's context budget for documents ───
+function getDocTokenBudget(modelId) {
+  const modelDef = LOCAL_MODELS.find(m => m.id === modelId);
+  const totalCtx = modelDef ? modelDef.contextWindow : 32768;
+  // Reserve tokens: system prompt (~3K), chat history (~4K), generation (~4K), memory (~1K)
+  const reserved = 12000;
+  return Math.max(totalCtx - reserved, 8000);
+}
+
+// ─── Chunk document into page-groups for smart inclusion ───
+function chunkDocumentByPages(docText, pageCount, chunkPages = 20) {
+  const chunks = [];
+  for (let start = 1; start <= pageCount; start += chunkPages) {
+    const end = Math.min(start + chunkPages - 1, pageCount);
+    const text = getDocPages(docText, start, end);
+    chunks.push({ startPage: start, endPage: end, text, tokens: estimateTokens(text) });
+  }
+  return chunks;
+}
+
+// ─── Score document chunks by relevance to user query ───
+function scoreChunkRelevance(chunk, queryTerms) {
+  const lower = chunk.text.toLowerCase();
+  let score = 0;
+  for (const term of queryTerms) {
+    const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    const matches = lower.match(re);
+    if (matches) score += matches.length;
+  }
+  // Boost first and last chunks (usually contain critical summary/conclusion info)
+  if (chunk.startPage === 1) score += 5;
+  return score;
+}
+
+// ─── Select the most relevant chunks that fit within token budget ───
+function selectRelevantChunks(chunks, queryTerms, tokenBudget) {
+  if (chunks.length === 0) return [];
+  const totalTokens = chunks.reduce((s, c) => s + c.tokens, 0);
+  // If everything fits, include everything
+  if (totalTokens <= tokenBudget) return chunks;
+
+  // Score each chunk
+  const scored = chunks.map(c => ({ ...c, score: scoreChunkRelevance(c, queryTerms) }));
+  // Always include first chunk (intro/summary pages)
+  const selected = [scored[0]];
+  let usedTokens = scored[0].tokens;
+
+  // Sort remaining by relevance score (descending)
+  const remaining = scored.slice(1).sort((a, b) => b.score - a.score);
+  for (const chunk of remaining) {
+    if (usedTokens + chunk.tokens <= tokenBudget) {
+      selected.push(chunk);
+      usedTokens += chunk.tokens;
+    }
+  }
+  // Re-sort by page order for coherent reading
+  selected.sort((a, b) => a.startPage - b.startPage);
+  return selected;
+}
+
+// ─── Extract search terms from user query for relevance scoring ───
+function extractQueryTerms(query) {
+  if (!query) return [];
+  const stopWords = new Set(["the","a","an","is","are","was","were","be","been","being","have","has","had","do","does","did","will","would","shall","should","may","might","can","could","must","need","dare","ought","used","to","of","in","for","on","with","at","by","from","as","into","through","during","before","after","above","below","between","out","off","over","under","again","further","then","once","here","there","when","where","why","how","all","each","every","both","few","more","most","other","some","such","no","nor","not","only","own","same","so","than","too","very","just","because","and","but","or","if","while","although","though","even","that","which","who","whom","what","this","these","those","my","your","his","her","its","our","their","me","him","us","them","i","you","he","she","it","we","they","about","please","help","tell","show","explain","describe","find","check","look","see","give"]);
+  return query.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stopWords.has(w));
+}
 
 // ─── Persistent Storage ───
 const CHAT_STORAGE_KEY = "auto-chat";
@@ -117,8 +220,8 @@ async function loadChat() {
   return current || legacy || [];
 }
 async function saveChat(msgs) {
-  // Only save user/assistant messages, skip system research messages, cap at 50
-  const toSave = msgs.filter(m => !(m.role === "user" && typeof m.content === "string" && m.content.startsWith("[SYSTEM:"))).slice(-50);
+  // Only save user/assistant messages, skip system research messages, cap at 100
+  const toSave = msgs.filter(m => !(m.role === "user" && typeof m.content === "string" && m.content.startsWith("[SYSTEM:"))).slice(-100);
   const json = JSON.stringify(toSave);
   // Save to BOTH storage backends for redundancy
   try { if (window.storage?.set) await window.storage.set(CHAT_STORAGE_KEY, json); } catch {}
@@ -537,7 +640,10 @@ function Auto() {
   const [pdfDocs, setPdfDocs] = useState([]); // [{name, text, pageCount, pageImages, blobUrl}]
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
   const [pdfViewerIdx, setPdfViewerIdx] = useState(0); // which pdf to view
+  const [docTextViewerOpen, setDocTextViewerOpen] = useState(false); // full extracted text viewer
+  const [docTextViewerIdx, setDocTextViewerIdx] = useState(0);
   const [streamingText, setStreamingText] = useState(""); // real-time streaming response
+  const lastUserQueryRef = useRef(""); // tracks last user query for smart document chunking
 
   // Load on mount — auto-load previously cached model
   useEffect(() => {
@@ -569,7 +675,9 @@ function Auto() {
         setLocalModelProgressText("Auto-loading model from cache...");
         try {
           const webllm = await getWebLLM();
+          const engineCfg = buildEngineConfig(localModelId);
           const engine = await webllm.CreateMLCEngine(localModelId, {
+            appConfig: engineCfg,
             initProgressCallback: (p) => {
               setLocalModelProgress(Math.round((p.progress || 0) * 100));
               setLocalModelProgressText(p.text || "");
@@ -697,7 +805,9 @@ function Auto() {
     setLocalModelProgressText("Fetching WebLLM engine...");
     try {
       const webllm = await getWebLLM();
+      const engineCfg = buildEngineConfig(localModelId);
       const engine = await webllm.CreateMLCEngine(localModelId, {
+        appConfig: engineCfg,
         initProgressCallback: (p) => {
           setLocalModelProgress(Math.round((p.progress || 0) * 100));
           setLocalModelProgressText(p.text || "");
@@ -725,7 +835,9 @@ function Auto() {
     setLocalModelProgressText("Loading from cache...");
     try {
       const webllm = await getWebLLM();
+      const engineCfg = buildEngineConfig(localModelId);
       const engine = await webllm.CreateMLCEngine(localModelId, {
+        appConfig: engineCfg,
         initProgressCallback: (p) => {
           setLocalModelProgress(Math.round((p.progress || 0) * 100));
           setLocalModelProgressText(p.text || "");
@@ -970,27 +1082,39 @@ When multiple documents are uploaded, you MUST perform systematic cross-referenc
 7. **References**: Complete list of all document pages cited`;
 
     // Include uploaded PDF document content for cross-referencing
-    // Optimised for 1000+ page documents: uses TOC + key pages instead of full text
+    // Smart chunked approach: fits maximum document content within model's context window
+    // Uses query-relevant chunk selection for 1000+ page documents
     if (pdfDocs.length > 0) {
+      const tokenBudget = getDocTokenBudget(localModelId);
+      const perDocBudget = Math.floor(tokenBudget / pdfDocs.length);
+
       s += `\n\n<documents>\nThe following documents have been uploaded for cross-referencing. ALWAYS cite these by name and page number.\n`;
       for (const doc of pdfDocs) {
-        const MAX_FULL_TEXT_CHARS = 25000; // ~6.5K tokens per document
-        if (doc.text.length <= MAX_FULL_TEXT_CHARS) {
-          // Small document — include full text
-          s += `\n<document name="${doc.name}" pages="${doc.pageCount}">\n${doc.text}\n</document>\n`;
+        const docTokens = estimateTokens(doc.text);
+        if (docTokens <= perDocBudget) {
+          // Fits entirely — include full text for maximum accuracy
+          s += `\n<document name="${doc.name}" pages="${doc.pageCount}" included="full">\n${doc.text}\n</document>\n`;
         } else {
-          // Large document — include TOC + first 10 pages + last 5 pages
+          // Large document — use smart chunked inclusion with relevance scoring
           const toc = buildDocIndex(doc.text, doc.pageCount);
-          const firstPages = getDocPages(doc.text, 1, Math.min(10, doc.pageCount));
-          const lastStart = Math.max(11, doc.pageCount - 4);
-          const lastPages = doc.pageCount > 10 ? getDocPages(doc.text, lastStart, doc.pageCount) : "";
-          s += `\n<document name="${doc.name}" pages="${doc.pageCount}" indexed="true">`;
-          s += `\n\n--- TABLE OF CONTENTS ---\nThis is a ${doc.pageCount}-page document. Below is a summary of each page. For specific page content, reference the page numbers shown.\n${toc}\n`;
-          s += `\n\n--- FIRST PAGES (1-${Math.min(10, doc.pageCount)}) ---\n${firstPages}\n`;
-          if (lastPages) {
-            s += `\n\n--- LAST PAGES (${lastStart}-${doc.pageCount}) ---\n${lastPages}\n`;
+          const tocTokens = estimateTokens(toc);
+          // Reserve tokens for TOC, then fill remaining with most relevant page chunks
+          const chunkBudget = Math.max(perDocBudget - tocTokens - 500, 4000);
+          const chunks = chunkDocumentByPages(doc.text, doc.pageCount, 15);
+          const queryTerms = extractQueryTerms(lastUserQueryRef.current || "");
+          // Add SMSF-specific terms that are always relevant for cross-referencing
+          const smsfTerms = ["trust", "deed", "investment", "strategy", "member", "balance", "compliance", "contribution", "pension", "benefit", "audit", "financial", "statement", "minutes", "rollover", "insurance", "asset", "allocation"];
+          const allTerms = [...queryTerms, ...smsfTerms];
+          const selectedChunks = selectRelevantChunks(chunks, allTerms, chunkBudget);
+          const includedPages = selectedChunks.map(c => `${c.startPage}-${c.endPage}`).join(", ");
+
+          s += `\n<document name="${doc.name}" pages="${doc.pageCount}" included="smart-chunked" pages_included="${includedPages}">`;
+          s += `\n\n--- TABLE OF CONTENTS (ALL ${doc.pageCount} PAGES) ---\n${toc}\n`;
+          for (const chunk of selectedChunks) {
+            s += `\n\n--- PAGES ${chunk.startPage}-${chunk.endPage} ---\n${chunk.text}\n`;
           }
-          s += `\n[NOTE: This document has ${doc.pageCount} pages. The TOC above summarises all pages. First and last pages are shown in full. For middle pages, cite the page numbers from the TOC and reference what was summarised.]\n</document>\n`;
+          const totalIncluded = selectedChunks.reduce((s, c) => s + (c.endPage - c.startPage + 1), 0);
+          s += `\n[NOTE: ${totalIncluded} of ${doc.pageCount} pages included (most relevant to your query). TOC covers ALL pages. All page numbers are accurate for citation.]\n</document>\n`;
         }
       }
       s += `</documents>`;
@@ -1030,7 +1154,7 @@ You have a visual avatar that shows your mood! Include an <expression> tag in EV
 Always include exactly ONE <expression> tag per response. Place it at the very START of your response, before any other text. Default to happy if unsure.`;
 
     return s;
-  }, [mem, pdfDocs]);
+  }, [mem, pdfDocs, localModelId]);
 
   // ─── Parse AI response (memory updates, expressions, terminal commands) ───
   const parseResponse = useCallback((text) => {
@@ -1179,6 +1303,10 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
           throw new Error(`Model reload failed. Please re-download the model from the sidebar. (${reloadErr.message})`);
         }
       }
+      // Provide helpful error messages for common issues
+      if (e.message && e.message.includes("context window")) {
+        throw new Error(`Document too large for current model. Try removing some documents or using a larger model (Llama 3.2 3B or Phi 3.5 Mini have 128K context). Original: ${e.message}`);
+      }
       throw new Error(`Local model error: ${e.message}`);
     }
   }, [localModelId]);
@@ -1198,7 +1326,7 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
         if (att.isImage) {
           attachBlock += `\n**[Image: ${att.name}]** (${(att.size/1024).toFixed(1)}KB) — *Image attached as base64. Describe if asked.*\n`;
         } else {
-          const preview = (att.content || "").slice(0, 2000); // Limit preview in chat message
+          const preview = (att.content || "").slice(0, 8000); // Expanded preview in chat message
           attachBlock += `\n**[File: ${att.name}]** (${att.type || "text"}, ${(att.size/1024).toFixed(1)}KB):\n\`\`\`\n${preview}\n\`\`\`\n`;
         }
       }
@@ -1233,7 +1361,7 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
       }
 
       abortRef.current = new AbortController();
-      const MAX_MSGS = 20;
+      const MAX_MSGS = 30;
 
       // ─── STEP 1: Planning — skip for document queries & simple queries ───
       let researchQuestions = [];
@@ -1312,6 +1440,8 @@ Rules:
 
       if (currentMsgs.length > MAX_MSGS) currentMsgs = currentMsgs.slice(-MAX_MSGS);
 
+      // Update query ref so buildSystem can select relevant document chunks
+      lastUserQueryRef.current = txt || userContent || "";
       let mainSystem = buildSystem();
       if (reviewerFindings.length > 0) {
         mainSystem += `\n\n<web_research>\nThe following web research was conducted by reviewer agents on your behalf. Use it to inform your response and cite it where relevant:\n`;
@@ -1327,9 +1457,12 @@ Rules:
       ];
 
       // Stream the main response for real-time display
+      // Use generous max_tokens — model context window supports it now
+      const modelDef = LOCAL_MODELS.find(m => m.id === localModelId);
+      const mainMaxTokens = modelDef ? Math.min(Math.floor(modelDef.contextWindow * 0.15), 16384) : 4096;
       const { data: mainData } = await callAI(mainApiMsgs, {
-        maxTokens: 4096,
-        timeoutMs: 120000,
+        maxTokens: mainMaxTokens,
+        timeoutMs: 300000,
         onChunk: (partial) => setStreamingText(partial),
       });
       if (mainData.usage) setUsage(p => ({ i: p.i + (mainData.usage.prompt_tokens || 0), o: p.o + (mainData.usage.completion_tokens || 0) }));
@@ -1377,7 +1510,7 @@ Rules:
         ];
 
         try {
-          const { data: reflectData } = await callAI(reflectionMsgs, { maxTokens: 4096, timeoutMs: 90000 });
+          const { data: reflectData } = await callAI(reflectionMsgs, { maxTokens: mainMaxTokens, timeoutMs: 180000 });
           if (reflectData.usage) setUsage(p => ({ i: p.i + (reflectData.usage.prompt_tokens || 0), o: p.o + (reflectData.usage.completion_tokens || 0) }));
           const reflectRaw = extractRaw(reflectData);
           // Sanity check: keep memory_update tag integrity
@@ -1413,7 +1546,7 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
         ];
 
         try {
-          const { data: verifyData } = await callAI(verifyMsgs, { maxTokens: 4096, timeoutMs: 90000 });
+          const { data: verifyData } = await callAI(verifyMsgs, { maxTokens: mainMaxTokens, timeoutMs: 180000 });
           if (verifyData.usage) setUsage(p => ({ i: p.i + (verifyData.usage.prompt_tokens || 0), o: p.o + (verifyData.usage.completion_tokens || 0) }));
           const verifyRaw = extractRaw(verifyData);
           if (verifyRaw.length > 50 && (!refinedRaw.includes("<memory_update>") || verifyRaw.includes("<memory_update>"))) {
@@ -1492,6 +1625,92 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
   const clearChat = () => { setMsgs([]); saveChat([]); clearVal(LEGACY_CHAT_STORAGE_KEY); setErr(null); };
   const ft = n => n >= 1e6 ? (n/1e6).toFixed(1)+"M" : n >= 1e3 ? (n/1e3).toFixed(1)+"K" : String(n);
 
+  // ─── Export chat analysis as PDF ───
+  const exportAnalysisPdf = useCallback(() => {
+    const assistantMsgs = msgs.filter(m => m.role === "assistant");
+    if (assistantMsgs.length === 0) { setErr("No analysis to export yet."); return; }
+
+    // Build a printable HTML document
+    const docNames = pdfDocs.map(d => d.name).join(", ") || "None";
+    const timestamp = new Date().toLocaleString("en-AU", { dateStyle: "full", timeStyle: "short" });
+    const modelName = LOCAL_MODELS.find(m => m.id === localModelId)?.name || localModelId;
+
+    // Convert markdown-ish text to basic HTML for print
+    const toHtml = (text) => {
+      if (!text) return "";
+      return text
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/\*\*\[([^\]]+)\]\*\*/g, '<strong style="color:#1a5276">[$1]</strong>')
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+        .replace(/`([^`]+)`/g, '<code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:0.9em">$1</code>')
+        .replace(/^### (.+)$/gm, '<h4 style="color:#2c3e50;margin:16px 0 6px;font-size:14px">$1</h4>')
+        .replace(/^## (.+)$/gm, '<h3 style="color:#2c3e50;margin:18px 0 8px;font-size:16px">$1</h3>')
+        .replace(/^# (.+)$/gm, '<h2 style="color:#1a5276;margin:20px 0 10px;font-size:18px">$1</h2>')
+        .replace(/^---+$/gm, '<hr style="border:none;border-top:1px solid #ccc;margin:12px 0">')
+        .replace(/^[\-\*] (.+)$/gm, '<div style="display:flex;gap:6px;margin:2px 0"><span style="color:#2980b9">•</span><span>$1</span></div>')
+        .replace(/^\d+\. (.+)$/gm, (_, t, i) => `<div style="display:flex;gap:6px;margin:2px 0"><span style="color:#2980b9;min-width:18px">${i + 1}.</span><span>${t}</span></div>`)
+        .replace(/\n\n/g, "</p><p>")
+        .replace(/\n/g, "<br>");
+    };
+
+    let chatHtml = "";
+    for (const m of msgs) {
+      if (m.role === "user") {
+        const userText = (m.content || "").replace(/\n\n---\n\*\*Attached files:\*\*[\s\S]*$/, "").trim();
+        if (userText) {
+          chatHtml += `<div style="background:#e8f8f5;border:1px solid #a3e4d7;border-radius:8px;padding:10px 14px;margin:8px 0;font-size:13px"><strong style="color:#117864">You:</strong> ${toHtml(userText)}</div>`;
+        }
+      } else {
+        chatHtml += `<div style="background:#fafafa;border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;margin:8px 0;font-size:13px"><strong style="color:#1a5276">Auto (SMSF Analysis):</strong><div style="margin-top:6px;line-height:1.7"><p>${toHtml(m.content)}</p></div></div>`;
+      }
+    }
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>SMSF Cross-Reference Analysis — Auto</title>
+<style>
+  @page { size: A4; margin: 20mm 15mm; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; color: #222; max-width: 800px; margin: 0 auto; padding: 20px; font-size: 13px; line-height: 1.6; }
+  h1 { color: #1a5276; font-size: 22px; margin-bottom: 4px; }
+  .meta { color: #666; font-size: 11px; margin-bottom: 16px; border-bottom: 2px solid #2980b9; padding-bottom: 10px; }
+  .disclaimer { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 8px 12px; font-size: 11px; color: #856404; margin: 16px 0; }
+  .footer { text-align: center; color: #999; font-size: 10px; margin-top: 30px; border-top: 1px solid #eee; padding-top: 10px; }
+</style></head><body>
+<h1>SMSF Cross-Reference Analysis Report</h1>
+<div class="meta">
+  <strong>Generated:</strong> ${timestamp}<br>
+  <strong>Documents analysed:</strong> ${docNames}<br>
+  <strong>Model:</strong> ${modelName} (Offline local analysis)<br>
+  <strong>Messages:</strong> ${msgs.length}
+</div>
+<div class="disclaimer">
+  <strong>Disclaimer:</strong> This report was generated by an AI assistant running locally on your device. It is intended as a working aid only and does not constitute financial, legal, or tax advice. All findings should be verified by a qualified SMSF auditor or professional adviser. AI-generated page citations should be cross-checked against the original documents.
+</div>
+${chatHtml}
+<div class="footer">
+  Generated by Auto — Australian SMSF Document Cross-Reference Agent<br>
+  Analysis performed offline using ${modelName}
+</div>
+</body></html>`;
+
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const printWin = window.open(url, "_blank");
+    if (printWin) {
+      printWin.onload = () => {
+        setTimeout(() => { printWin.print(); }, 500);
+      };
+    } else {
+      // Fallback: download as HTML
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `SMSF-Analysis-${new Date().toISOString().slice(0,10)}.html`;
+      a.click();
+    }
+    URL.revokeObjectURL(url);
+  }, [msgs, pdfDocs, localModelId]);
+
   // ═══ RENDER ═══
   const S = {
     "--f": "'Nunito Sans', system-ui, sans-serif",
@@ -1510,6 +1729,36 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
           blobUrl={pdfDocs[pdfViewerIdx].blobUrl}
           onClose={() => setPdfViewerOpen(false)}
         />
+      )}
+      {/* Full Document Text Viewer Modal — shows complete extracted text for cross-referencing */}
+      {docTextViewerOpen && pdfDocs[docTextViewerIdx] && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.85)", display: "flex", flexDirection: "column", animation: "fadeIn .2s ease" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "#0d0d14", borderBottom: "1px solid var(--bd)", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "14px" }}>{"\uD83D\uDCDA"}</span>
+              <span style={{ fontWeight: 700, fontSize: "14px", color: "var(--ac2)" }}>{pdfDocs[docTextViewerIdx].name}</span>
+              <span style={{ fontSize: "10px", color: "var(--dm)", fontFamily: "var(--m)" }}>
+                {pdfDocs[docTextViewerIdx].pageCount} pages · {(pdfDocs[docTextViewerIdx].text.length / 1024).toFixed(0)}KB text · ~{estimateTokens(pdfDocs[docTextViewerIdx].text).toLocaleString()} tokens
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <button onClick={() => { navigator.clipboard.writeText(pdfDocs[docTextViewerIdx].text); }} style={{ ...btn("#88bbcc") }}>Copy All</button>
+              <button onClick={() => {
+                const blob = new Blob([pdfDocs[docTextViewerIdx].text], { type: "text/plain" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = pdfDocs[docTextViewerIdx].name.replace(/\.pdf$/i, "") + "-extracted.txt";
+                a.click();
+              }} style={{ ...btn("#7ce08a") }}>Download .txt</button>
+              <button onClick={() => setDocTextViewerOpen(false)} style={{ background: "none", border: "none", color: "var(--dm)", cursor: "pointer", fontSize: "20px", padding: "0 4px" }}>×</button>
+            </div>
+          </div>
+          <div style={{ flex: 1, overflow: "auto", padding: "16px 20px" }}>
+            <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--m)", fontSize: "12px", color: "var(--tx)", lineHeight: 1.7, margin: 0 }}>
+              {pdfDocs[docTextViewerIdx].text}
+            </pre>
+          </div>
+        </div>
       )}
       {/* ═══ LEFT SIDEBAR ═══ */}
       {sidebarOpen && (
@@ -1557,15 +1806,18 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
                 <div key={i} style={{
                   display: "flex", alignItems: "center", gap: "6px", padding: "4px 6px",
                   borderRadius: "5px", background: "rgba(136,187,204,0.05)", border: "1px solid rgba(136,187,204,0.1)",
-                  marginBottom: "4px", cursor: "pointer",
-                }} onClick={() => { setPdfViewerIdx(i); setPdfViewerOpen(true); }}>
+                  marginBottom: "4px",
+                }}>
                   <span style={{ fontSize: "10px" }}>{"\uD83D\uDCC4"}</span>
-                  <span style={{ fontSize: "10px", color: "var(--ac2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--m)" }}>{doc.name}</span>
-                  <span style={{ fontSize: "8px", color: "var(--dm)", fontFamily: "var(--m)" }}>{doc.pageCount} pages</span>
+                  <span style={{ fontSize: "10px", color: "var(--ac2)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--m)", cursor: "pointer" }} onClick={() => { setPdfViewerIdx(i); setPdfViewerOpen(true); }}>{doc.name}</span>
+                  <span style={{ fontSize: "8px", color: "var(--dm)", fontFamily: "var(--m)" }}>{doc.pageCount}pg</span>
+                  <button onClick={() => { setDocTextViewerIdx(i); setDocTextViewerOpen(true); }} style={{ background: "none", border: "1px solid rgba(136,187,204,0.2)", color: "var(--ac2)", cursor: "pointer", fontSize: "8px", padding: "1px 4px", borderRadius: "3px", fontFamily: "var(--m)" }} title="View full extracted text">Text</button>
+                  <button onClick={() => { setPdfViewerIdx(i); setPdfViewerOpen(true); }} style={{ background: "none", border: "1px solid rgba(136,187,204,0.2)", color: "var(--ac2)", cursor: "pointer", fontSize: "8px", padding: "1px 4px", borderRadius: "3px", fontFamily: "var(--m)" }} title="View PDF pages">PDF</button>
                 </div>
               ))}
               <div style={{ fontSize: "9px", color: "var(--dm)", fontFamily: "var(--m)", marginTop: "4px", lineHeight: 1.4 }}>
-                Click to view. AI will cross-reference these with page citations.
+                Click name/PDF to view pages. Text to see full extracted content.<br/>
+                AI cross-references with page citations using expanded {(LOCAL_MODELS.find(m => m.id === localModelId)?.contextWindow || 32768).toLocaleString()} token context.
               </div>
             </div>
           )}
@@ -1643,14 +1895,14 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
                     </div>
                     {/* Spec chips */}
                     <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
-                      {[m.vram, m.ram, m.cpu].map(spec => (
+                      {[m.vram, m.ram, m.cpu, `${(m.contextWindow/1024).toFixed(0)}K ctx`].map(spec => (
                         <span key={spec} style={{ fontSize: "8.5px", color: selected ? m.color : "var(--dm)", fontFamily: "var(--m)", padding: "1px 5px", borderRadius: "3px", background: selected ? m.color + "15" : "rgba(255,255,255,0.03)", border: `1px solid ${selected ? m.color + "30" : "rgba(255,255,255,0.05)"}` }}>
                           {spec}
                         </span>
                       ))}
                     </div>
                     {/* Desc */}
-                    <div style={{ fontSize: "9px", color: "var(--dm)", marginTop: "4px", lineHeight: 1.4 }}>{m.desc}</div>
+                    <div style={{ fontSize: "9px", color: "var(--dm)", marginTop: "4px", lineHeight: 1.4 }}>{m.desc} Context: {m.contextWindow.toLocaleString()} tokens.</div>
                   </div>
                 );
               })}
@@ -1755,6 +2007,12 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
               <span style={{ fontSize: "13px" }}>🧠</span>
               <span style={{ fontSize: "10px", fontFamily: "var(--m)" }}>Workspace</span>
             </button>
+            <button
+              onClick={exportAnalysisPdf}
+              disabled={msgs.filter(m => m.role === "assistant").length === 0}
+              style={{ ...hdr(), fontSize: "10px", fontFamily: "var(--m)", color: msgs.filter(m => m.role === "assistant").length > 0 ? "#88bbcc" : "var(--dm)", borderColor: msgs.filter(m => m.role === "assistant").length > 0 ? "rgba(136,187,204,0.2)" : undefined, opacity: msgs.filter(m => m.role === "assistant").length > 0 ? 1 : 0.5 }}
+              title="Export analysis as PDF report"
+            >Export PDF</button>
             <button onClick={clearChat} style={{ ...hdr(), fontSize: "10px", fontFamily: "var(--m)" }}>Clear</button>
           </div>
         </header>
@@ -1787,6 +2045,11 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
                     )}
                     <div style={{ background: m.role === "user" ? "rgba(124,224,138,0.08)" : "rgba(255,255,255,0.02)", border: "1px solid var(--bd)", borderRadius: "10px", padding: "10px 12px", minWidth: 0 }}>
                       {m.role === "assistant" ? <Md text={m.content} /> : <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{m.content}</div>}
+                      {m.role === "assistant" && (
+                        <div style={{ display: "flex", gap: "4px", marginTop: "6px", paddingTop: "6px", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+                          <button onClick={() => { try { navigator.clipboard.writeText(m.content); } catch {} }} style={{ background: "none", border: "1px solid rgba(136,187,204,0.15)", color: "var(--dm)", cursor: "pointer", fontSize: "9px", padding: "2px 6px", borderRadius: "3px", fontFamily: "var(--m)" }}>Copy</button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
