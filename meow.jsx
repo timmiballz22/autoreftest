@@ -31,6 +31,7 @@ const LOCAL_MODELS = [
     ram: "2GB RAM",
     cpu: "Any CPU",
     desc: "Fastest. Basic quality. Works on low-end hardware.",
+    contextWindow: 32768,
   },
   {
     id: "Llama-3.2-3B-Instruct-q4f16_1-MLC",
@@ -41,6 +42,7 @@ const LOCAL_MODELS = [
     ram: "4GB RAM",
     cpu: "Modern multi-core",
     desc: "Balanced speed and quality.",
+    contextWindow: 65536,
   },
   {
     id: "Phi-3.5-mini-instruct-q4f16_1-MLC",
@@ -51,8 +53,15 @@ const LOCAL_MODELS = [
     ram: "6GB RAM",
     cpu: "Modern GPU recommended",
     desc: "Best quality. Slower on weak hardware.",
+    contextWindow: 65536,
   },
 ];
+
+// Get context window size for the selected model
+function getModelContextWindow(modelId) {
+  const model = LOCAL_MODELS.find(m => m.id === modelId);
+  return model?.contextWindow || 32768;
+}
 
 // ─── Persistent Storage ───
 const CHAT_STORAGE_KEY = "auto-chat";
@@ -569,11 +578,14 @@ function Auto() {
         setLocalModelProgressText("Auto-loading model from cache...");
         try {
           const webllm = await getWebLLM();
+          const ctxSize = getModelContextWindow(localModelId);
           const engine = await webllm.CreateMLCEngine(localModelId, {
             initProgressCallback: (p) => {
               setLocalModelProgress(Math.round((p.progress || 0) * 100));
               setLocalModelProgressText(p.text || "");
             },
+            context_window_size: ctxSize,
+            sliding_window_size: ctxSize,
           });
           localEngineRef.current = engine;
           setLocalModelStatus("ready");
@@ -697,11 +709,14 @@ function Auto() {
     setLocalModelProgressText("Fetching WebLLM engine...");
     try {
       const webllm = await getWebLLM();
+      const ctxSize = getModelContextWindow(localModelId);
       const engine = await webllm.CreateMLCEngine(localModelId, {
         initProgressCallback: (p) => {
           setLocalModelProgress(Math.round((p.progress || 0) * 100));
           setLocalModelProgressText(p.text || "");
         },
+        context_window_size: ctxSize,
+        sliding_window_size: ctxSize,
       });
       localEngineRef.current = engine;
       setLocalModelStatus("ready");
@@ -725,11 +740,14 @@ function Auto() {
     setLocalModelProgressText("Loading from cache...");
     try {
       const webllm = await getWebLLM();
+      const ctxSize = getModelContextWindow(localModelId);
       const engine = await webllm.CreateMLCEngine(localModelId, {
         initProgressCallback: (p) => {
           setLocalModelProgress(Math.round((p.progress || 0) * 100));
           setLocalModelProgressText(p.text || "");
         },
+        context_window_size: ctxSize,
+        sliding_window_size: ctxSize,
       });
       localEngineRef.current = engine;
       setLocalModelStatus("ready");
@@ -972,9 +990,11 @@ When multiple documents are uploaded, you MUST perform systematic cross-referenc
     // Include uploaded PDF document content for cross-referencing
     // Optimised for 1000+ page documents: uses TOC + key pages instead of full text
     if (pdfDocs.length > 0) {
+      const TOTAL_DOC_BUDGET = 40000; // ~10K tokens total across all documents
+      const PER_DOC_CAP = Math.floor(TOTAL_DOC_BUDGET / Math.max(pdfDocs.length, 1));
       s += `\n\n<documents>\nThe following documents have been uploaded for cross-referencing. ALWAYS cite these by name and page number.\n`;
       for (const doc of pdfDocs) {
-        const MAX_FULL_TEXT_CHARS = 25000; // ~6.5K tokens per document
+        const MAX_FULL_TEXT_CHARS = Math.min(25000, PER_DOC_CAP); // cap per doc based on budget
         if (doc.text.length <= MAX_FULL_TEXT_CHARS) {
           // Small document — include full text
           s += `\n<document name="${doc.name}" pages="${doc.pageCount}">\n${doc.text}\n</document>\n`;
@@ -1029,6 +1049,46 @@ You have a visual avatar that shows your mood! Include an <expression> tag in EV
 
 Always include exactly ONE <expression> tag per response. Place it at the very START of your response, before any other text. Default to happy if unsure.`;
 
+    return s;
+  }, [mem, pdfDocs]);
+
+  // ─── Compact system prompt for Light (0.5B) models — fits within smaller context budgets ───
+  const buildSystemCompact = useCallback(() => {
+    const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    let s = `You are Auto, an SMSF cross-reference expert. Today: ${today}.
+Use markdown. Cite documents as **[Document Name, Page X]**. Cross-reference uploaded documents systematically.
+
+Rules:
+- EVERY factual claim about a document MUST include a page citation
+- Cross-reference between documents (e.g. trust deed vs investment strategy)
+- List discrepancies found between documents
+- End with a References section listing all cited pages`;
+
+    // Include documents with tighter per-doc budget for Light models
+    if (pdfDocs.length > 0) {
+      const DOC_BUDGET = Math.floor(15000 / Math.max(pdfDocs.length, 1)); // ~15K chars total for all docs
+      s += `\n\n<documents>\n`;
+      for (const doc of pdfDocs) {
+        if (doc.text.length <= DOC_BUDGET) {
+          s += `<document name="${doc.name}" pages="${doc.pageCount}">\n${doc.text}\n</document>\n`;
+        } else {
+          const toc = buildDocIndex(doc.text, doc.pageCount);
+          const firstPages = getDocPages(doc.text, 1, Math.min(5, doc.pageCount));
+          const lastStart = Math.max(6, doc.pageCount - 2);
+          const lastPages = doc.pageCount > 5 ? getDocPages(doc.text, lastStart, doc.pageCount) : "";
+          s += `<document name="${doc.name}" pages="${doc.pageCount}" indexed="true">`;
+          s += `\n--- TOC ---\n${toc}\n`;
+          s += `\n--- FIRST PAGES ---\n${firstPages}\n`;
+          if (lastPages) s += `\n--- LAST PAGES ---\n${lastPages}\n`;
+          s += `</document>\n`;
+        }
+      }
+      s += `</documents>`;
+    }
+
+    if (mem.trim()) s += `\n<memory>\n${mem}\n</memory>`;
+    s += `\nInclude <expression>happy|serious|veryHappy</expression> at START of every response.`;
+    s += `\nInclude <memory_update>full updated memory</memory_update> at END of every response.`;
     return s;
   }, [mem, pdfDocs]);
 
@@ -1190,21 +1250,27 @@ Always include exactly ONE <expression> tag per response. Place it at the very S
     if (busy || busyRef.current) return; // ref-based double-send guard
     setErr(null); setBusy(true); busyRef.current = true; setActivityStatus(""); setStreamingText("");
 
-    // Build user message content with attachments
+    // Build user message content with attachments — PDFs shown as compact chips, not raw text
     let userContent = txt;
+    const msgAttachments = []; // metadata for rendering clickable chips in chat
     if (attachments.length > 0) {
       let attachBlock = "\n\n---\n**Attached files:**\n";
       for (const att of attachments) {
         if (att.isImage) {
-          attachBlock += `\n**[Image: ${att.name}]** (${(att.size/1024).toFixed(1)}KB) — *Image attached as base64. Describe if asked.*\n`;
+          attachBlock += `\n**[Image: ${att.name}]** (${(att.size/1024).toFixed(1)}KB) — *Image attached.*\n`;
+        } else if (att.isPdf) {
+          // Compact reference only — document text is in the system prompt, not here
+          const sizeStr = att.size >= 1024*1024 ? (att.size/(1024*1024)).toFixed(1)+"MB" : (att.size/1024).toFixed(0)+"KB";
+          attachBlock += `\n\uD83D\uDCC4 **${att.name}** (${att.pageCount || "?"} pages, ${sizeStr})\n`;
+          msgAttachments.push({ name: att.name, isPdf: true, pageCount: att.pageCount, size: att.size });
         } else {
-          const preview = (att.content || "").slice(0, 2000); // Limit preview in chat message
+          const preview = (att.content || "").slice(0, 500);
           attachBlock += `\n**[File: ${att.name}]** (${att.type || "text"}, ${(att.size/1024).toFixed(1)}KB):\n\`\`\`\n${preview}\n\`\`\`\n`;
         }
       }
       userContent = (txt || "Here are my attached files:") + attachBlock;
     }
-    const userMsg = { role: "user", content: userContent };
+    const userMsg = { role: "user", content: userContent, _attachments: msgAttachments.length > 0 ? msgAttachments : undefined };
     let currentMsgs = [...msgs, userMsg];
     setMsgs(currentMsgs); setInput(""); setAttachments([]);
     if (inputRef.current) inputRef.current.style.height = "auto";
@@ -1312,7 +1378,8 @@ Rules:
 
       if (currentMsgs.length > MAX_MSGS) currentMsgs = currentMsgs.slice(-MAX_MSGS);
 
-      let mainSystem = buildSystem();
+      const isLightModel = localModelId.includes("0.5B");
+      let mainSystem = isLightModel ? buildSystemCompact() : buildSystem();
       if (reviewerFindings.length > 0) {
         mainSystem += `\n\n<web_research>\nThe following web research was conducted by reviewer agents on your behalf. Use it to inform your response and cite it where relevant:\n`;
         for (const { question, findings } of reviewerFindings) {
@@ -1478,7 +1545,7 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
       setStreamingText("");
       abortRef.current = null;
     }
-  }, [input, msgs, busy, buildSystem, parseResponse, callAI, attachments, pdfDocs]);
+  }, [input, msgs, busy, buildSystem, buildSystemCompact, localModelId, parseResponse, callAI, attachments, pdfDocs]);
 
   // ─── Expression image resolver — blink overrides all other states ───
   const getExprImg = useCallback((speakingOverride = false) => {
@@ -1787,6 +1854,27 @@ CRITICAL: Preserve ALL tags (<expression>, <memory_update>) exactly.`;
                     )}
                     <div style={{ background: m.role === "user" ? "rgba(124,224,138,0.08)" : "rgba(255,255,255,0.02)", border: "1px solid var(--bd)", borderRadius: "10px", padding: "10px 12px", minWidth: 0 }}>
                       {m.role === "assistant" ? <Md text={m.content} /> : <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{m.content}</div>}
+                      {/* Clickable PDF chips for messages with attachments */}
+                      {m._attachments?.filter(a => a.isPdf).length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px", paddingTop: "8px", borderTop: "1px solid rgba(136,187,204,0.15)" }}>
+                          {m._attachments.filter(a => a.isPdf).map((a, j) => (
+                            <button key={j} onClick={() => {
+                              const idx = pdfDocs.findIndex(d => d.name === a.name);
+                              if (idx >= 0) { setPdfViewerIdx(idx); setPdfViewerOpen(true); }
+                            }} style={{
+                              display: "flex", alignItems: "center", gap: "6px",
+                              padding: "5px 10px", borderRadius: "6px", cursor: "pointer",
+                              background: "rgba(136,187,204,0.1)", border: "1px solid rgba(136,187,204,0.25)",
+                              color: "#88bbcc", fontSize: "11px", fontFamily: "var(--m)",
+                            }}>
+                              <span style={{ fontSize: "13px" }}>{"\uD83D\uDCC4"}</span>
+                              <span style={{ fontWeight: 600 }}>{a.name}</span>
+                              <span style={{ fontSize: "9px", opacity: 0.7 }}>{a.pageCount || "?"} pages</span>
+                              <span style={{ fontSize: "9px", padding: "1px 4px", borderRadius: "3px", background: "rgba(136,187,204,0.15)", fontWeight: 600 }}>View</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
