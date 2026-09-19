@@ -1,0 +1,51 @@
+name: Build CS2 Fabric Mod
+
+on:
+  push:
+    branches: [chatgpt-cs2fabric-build]
+    paths:
+      - 'chatgpt-cs2fabric/**'
+      - '.github/workflows/chatgpt-cs2fabric-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct source archive
+        shell: bash
+        run: |
+          cat chatgpt-cs2fabric/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/cs2fabric-source.zip
+          mkdir -p /tmp/cs2src
+          unzip -q /tmp/cs2fabric-source.zip -d /tmp/cs2src
+          test -f /tmp/cs2src/cs2fabric/build.gradle
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle 9.5.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Build remapped Fabric JAR
+        working-directory: /tmp/cs2src/cs2fabric
+        run: gradle --no-daemon clean build --stacktrace
+
+      - name: List outputs
+        working-directory: /tmp/cs2src/cs2fabric
+        run: |
+          ls -lah build/libs
+          file build/libs/*.jar
+
+      - name: Upload production JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: cs2-fabric-1.21.11
+          path: /tmp/cs2src/cs2fabric/build/libs/*.jar
+          if-no-files-found: error
