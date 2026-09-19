@@ -37,18 +37,19 @@ jobs:
           cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
 
-      - name: Restore v2.2 laser sound code
+      - name: Restore v2.2 laser sound
         run: |
           base64 -d skibidi-v22-codepatch.b64 > v22-patch.tar.gz
           tar -xzf v22-patch.tar.gz
           cp -a skibidi-v2.2-codepatch/. skibidi-gh-build-min/
 
-      - name: Overlay v2.3 real laser combat
+      - name: Overlay final v2.3 combat and renderer patch
         run: |
-          cat v23p00.txt v23p01.txt v23p02.txt | base64 -d > v23-patch.tar.gz
-          echo "3b1191e752ae08cea960d71c6e4fb129975beb710b3e37a3b0467ff071464492  v23-patch.tar.gz" | sha256sum -c -
-          tar -xzf v23-patch.tar.gz
-          cp -a skibidi-v23-patch/. skibidi-gh-build-min/
+          cat v23f00.txt v23f01.txt v23f02.txt v23f03.txt | base64 -d > v23-final.tar.gz
+          echo "b6e69e64418167b476551595c12766c8a9220faeec785b8a0ca8b34024c56c7d  v23-final.tar.gz" | sha256sum -c -
+          mkdir -p v23-final
+          tar -xzf v23-final.tar.gz -C v23-final
+          cp -a v23-final/. skibidi-gh-build-min/
 
       - name: Static regression checks
         working-directory: skibidi-gh-build-min
@@ -56,6 +57,7 @@ jobs:
           grep -q 'mod_version=2.3.0' gradle.properties
           grep -q 'implements RangedAttackMob' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
           grep -q 'target.hurtServer' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q 'laserPulseCooldown' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
           grep -q 'hasLineOfSight' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
           grep -q 'ServerBossEvent' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
           grep -q '450.0D, 24.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
@@ -63,8 +65,8 @@ jobs:
           grep -q '900.0D, 34.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
           grep -q 'state.laserFiring' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           grep -q 'if (laserFiring)' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          grep -q 'G2_LASER_Y = 0.92F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          grep -q 'isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/SkibidiSoundController.java
+          grep -q 'G2_LASER_Y = 0.90F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          grep -q 'G2_LASER_Z = -0.44F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
           grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
           test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
@@ -73,36 +75,59 @@ jobs:
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
 
-      - name: Dedicated server smoke test
+      - name: Dedicated server laser combat integration test
         working-directory: skibidi-gh-build-min
         run: |
           mkdir -p run
           echo "eula=true" > run/eula.txt
-          set +e
-          timeout 110s gradle runServer --no-daemon --no-configuration-cache > ../server-smoke.log 2>&1
-          code=$?
-          set -e
-          cat ../server-smoke.log
-          grep -q "Skibidi Toilet initialized" ../server-smoke.log
-          grep -q "Done (" ../server-smoke.log
-          ! grep -q "Minecraft Crash Report" ../server-smoke.log
-          ! grep -q "ExceptionInInitializerError" ../server-smoke.log
-          echo "server smoke exit code: $code"
+          python3 -m pip install --disable-pip-version-check -q pexpect
+          python3 - <<'PY' | tee ../server-combat.log
+          import pexpect, re, sys, time
+          child = pexpect.spawn(
+              'gradle',
+              ['runServer', '--no-daemon', '--no-configuration-cache', '--console=plain'],
+              cwd='.',
+              encoding='utf-8',
+              timeout=180
+          )
+          child.logfile = sys.stdout
+          child.expect(re.compile(r'Done \('))
+          child.sendline('gamerule doMobSpawning false')
+          child.sendline('fill -5 100 -5 5 100 30 minecraft:stone')
+          child.sendline('scoreboard objectives add sktest dummy')
+          child.sendline('summon minecraft:villager 0 101 20 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('attribute @e[type=minecraft:villager,limit=1] minecraft:max_health base set 500')
+          child.sendline('data merge entity @e[type=minecraft:villager,limit=1] {Health:500.0f}')
+          child.sendline('summon skibidi:g_toilet_2 0 101 0 {NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
+          time.sleep(6)
+          child.sendline('execute store result score #health sktest run data get entity @e[type=minecraft:villager,limit=1] Health 10')
+          child.sendline('execute if score #health sktest matches ..4999 run say LASER_DAMAGE_PASS')
+          child.expect('LASER_DAMAGE_PASS', timeout=30)
+          child.sendline('execute store result score #boss sktest run data get entity @e[type=skibidi:g_toilet_2,limit=1] Health 1')
+          child.sendline('execute if score #boss sktest matches 650 run say G2_HP_PASS')
+          child.expect('G2_HP_PASS', timeout=30)
+          child.sendline('stop')
+          child.expect(pexpect.EOF, timeout=60)
+          PY
+          grep -q 'LASER_DAMAGE_PASS' ../server-combat.log
+          grep -q 'G2_HP_PASS' ../server-combat.log
+          ! grep -q 'Minecraft Crash Report' ../server-combat.log
 
-      - name: Client renderer smoke test
+      - name: Client renderer startup smoke test
         working-directory: skibidi-gh-build-min
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
           set +e
-          timeout 120s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-smoke.log 2>&1
+          timeout 90s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-smoke.log 2>&1
           code=$?
           set -e
           tail -n 250 ../client-smoke.log
-          grep -q "Skibidi Toilet initialized" ../client-smoke.log
-          ! grep -q "Minecraft Crash Report" ../client-smoke.log
-          ! grep -q "ExceptionInInitializerError" ../client-smoke.log
-          ! grep -q "Could not execute entrypoint" ../client-smoke.log
+          grep -q 'Skibidi Toilet initialized' ../client-smoke.log
+          ! grep -q 'Minecraft Crash Report' ../client-smoke.log
+          ! grep -q 'ExceptionInInitializerError' ../client-smoke.log
+          ! grep -q 'Could not execute entrypoint' ../client-smoke.log
           echo "client smoke exit code: $code"
 
       - name: Inspect production JAR
@@ -112,14 +137,15 @@ jobs:
           grep -q 'GToiletEntity.class' jar-contents-v23.txt
           grep -q 'SkibidiRenderState.class' jar-contents-v23.txt
           grep -q 'GToiletLaserLoopSound.class' jar-contents-v23.txt
+          grep -q 'assets/skibidi/sounds/g_toilet_lasers.ogg' jar-contents-v23.txt
           ! grep -q 'SkibidiZombieRenderer.class' jar-contents-v23.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v23-compiled
+          name: skibidi-v23-final
           path: |
             skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
             skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0-sources.jar
             jar-contents-v23.txt
-            server-smoke.log
+            server-combat.log
             client-smoke.log
