@@ -1,1 +1,1 @@
-build skibidi v2.1 final
+compile skibidi v2.1 final jar
