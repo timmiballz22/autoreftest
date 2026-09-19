@@ -1,0 +1,1 @@
+Glock reserve 60; P2000/USP-S rate 353 RPM. Trigger latest v0.4.0 verification.
