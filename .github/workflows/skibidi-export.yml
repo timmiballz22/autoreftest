@@ -1,0 +1,42 @@
+name: Export Skibidi Current Source
+on:
+  push:
+    branches:
+      - chatgpt-skibidi-build-20260919
+    paths:
+      - source-export-trigger.txt
+      - .github/workflows/skibidi-export.yml
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct v2.3.1 source
+        run: |
+          cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
+          tar -xzf payload.tar.gz
+          cat v2p00.txt v2p01.txt v2p02.txt v2p03.txt v2p04.txt | base64 -d > v2-patch.tar.gz
+          tar -xzf v2-patch.tar.gz
+          cp -a skibidi-v2-patch/. skibidi-gh-build-min/
+          rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
+          rm -f skibidi-gh-build-min/src/main/resources/data/minecraft/tags/entity_type/zombies.json
+          cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          base64 -d skibidi-v22-codepatch.b64 > v22-patch.tar.gz
+          tar -xzf v22-patch.tar.gz
+          cp -a skibidi-v2.2-codepatch/. skibidi-gh-build-min/
+          cat v23f00.txt v23f01.txt v23f02.txt v23f03.txt | base64 -d > v23-final.tar.gz
+          mkdir -p v23-final
+          tar -xzf v23-final.tar.gz -C v23-final
+          cp -a v23-final/. skibidi-gh-build-min/
+          cp v231/ModEntityTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          cp v231/gradle.properties skibidi-gh-build-min/gradle.properties
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skibidi-v231-source
+          path: |
+            skibidi-gh-build-min/src
+            skibidi-gh-build-min/build.gradle
+            skibidi-gh-build-min/settings.gradle
+            skibidi-gh-build-min/gradle.properties
+            skibidi-gh-build-min/LICENSE-CODE.txt
