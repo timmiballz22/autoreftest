@@ -22,7 +22,7 @@ jobs:
           tar -xzf payload.tar.gz
       - name: Build and remap
         working-directory: skibidi-gh-build-min
-        run: gradle build --stacktrace
+        run: gradle build --stacktrace --no-configuration-cache
       - uses: actions/upload-artifact@v4
         with:
           name: skibidi-compiled
