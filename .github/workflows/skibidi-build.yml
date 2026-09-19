@@ -35,9 +35,9 @@ jobs:
           cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
       - name: Overlay v2.2 laser audio patch
         run: |
-          base64 -d skibidi-v22-patch.b64 > v22-patch.tar.gz
+          base64 -d skibidi-v22-codepatch.b64 > v22-patch.tar.gz
           tar -xzf v22-patch.tar.gz
-          cp -a skibidi-v2.2-patch/. skibidi-gh-build-min/
+          cp -a skibidi-v2.2-codepatch/. skibidi-gh-build-min/
       - name: Build and remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
