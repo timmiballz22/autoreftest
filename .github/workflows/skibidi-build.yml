@@ -18,25 +18,38 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.1'
-      - name: Decode v2 source
+      - name: Restore original v1 source payload
         run: |
-          cat v2chunk00.txt v2chunk01.txt v2chunk02.txt v2chunk03.txt v2chunk04.txt v2chunk05.txt v2chunk06.txt v2chunk07.txt | base64 -d > v2-payload.tar.gz
-          echo "60a5c3180db2fe0e14bac1866cf23ede20ea8cd369c46e1c63fe8f3d7eeefdea  v2-payload.tar.gz" | sha256sum -c -
-          tar -xzf v2-payload.tar.gz
-      - name: Offline structural validation
-        working-directory: skibidi-v2-build-payload
+          cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
+          tar -xzf payload.tar.gz
+      - name: Overlay v2 source rewrite
+        run: |
+          base64 -d skibidi-v2-patch.b64 > v2-patch.tar.gz
+          echo "ead44b50788482a3ea9b00c8ef54de0df84a1fdde49426f551f01232ebb24035  v2-patch.tar.gz" | sha256sum -c -
+          tar -xzf v2-patch.tar.gz
+          cp -a skibidi-v2-patch/. skibidi-gh-build-min/
+          rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
+          rm -f skibidi-gh-build-min/src/main/resources/assets/skibidi/mesh/skibidi.skbm
+          rm -f skibidi-gh-build-min/src/main/resources/data/minecraft/tags/entity_type/zombies.json
+      - name: Generate corrected model assets
+        working-directory: skibidi-gh-build-min
+        run: |
+          python3 -m pip install --disable-pip-version-check pillow
+          python3 tools/generate_assets_v2.py
+      - name: Offline validation
+        working-directory: skibidi-gh-build-min
         run: python3 tools/validate_project.py
       - name: Build and remap
-        working-directory: skibidi-v2-build-payload
+        working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
-      - name: Inspect jars
+      - name: Inspect production jar
         run: |
-          ls -lah skibidi-v2-build-payload/build/libs/
-          unzip -l skibidi-v2-build-payload/build/libs/skibidi-toilet-2.0.0.jar | tee jar-contents.txt
+          ls -lah skibidi-gh-build-min/build/libs/
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.0.0.jar | tee jar-contents-v2.txt
       - uses: actions/upload-artifact@v4
         with:
           name: skibidi-v2-compiled
           path: |
-            skibidi-v2-build-payload/build/libs/skibidi-toilet-2.0.0.jar
-            skibidi-v2-build-payload/build/libs/skibidi-toilet-2.0.0-sources.jar
-            jar-contents.txt
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.0.0.jar
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.0.0-sources.jar
+            jar-contents-v2.txt
