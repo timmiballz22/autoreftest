@@ -152,7 +152,7 @@ jobs:
         working-directory: /tmp/cs2src/cs2fabric
         env:
           ALSOFT_DRIVERS: "null"
-        run: gradle --no-daemon runClientGameTest --stacktrace
+        run: gradle --no-daemon -Dfabric.client.gametest.disableNetworkSynchronizer=true runClientGameTest --stacktrace
 
       - name: Build remapped production JAR
         working-directory: /tmp/cs2src/cs2fabric
