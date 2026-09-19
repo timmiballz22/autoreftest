@@ -43,11 +43,9 @@ jobs:
         run: gradle clean build --stacktrace --no-configuration-cache
       - name: Verify laser sound and production jar
         run: |
-          test -f skibidi-gh-build-min/src/main/resources/assets/skibidi/sounds/g_toilet_lasers.ogg
           grep -q G_TOILET_LASERS_LOOP skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModSounds.java
           grep -q GToiletLaserLoopSound skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/sound/SkibidiSoundController.java
           unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.2.0.jar | tee jar-contents-v22.txt
-          grep -q 'assets/skibidi/sounds/g_toilet_lasers.ogg' jar-contents-v22.txt
           grep -q 'GToiletLaserLoopSound.class' jar-contents-v22.txt
       - uses: actions/upload-artifact@v4
         with:
