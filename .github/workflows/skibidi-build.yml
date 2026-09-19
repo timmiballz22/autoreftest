@@ -1,13 +1,13 @@
-name: Skibidi Fabric Build
+name: Skibidi Fabric v2.3 Build
 on:
   push:
     branches:
       - chatgpt-skibidi-build-20260919
     paths:
-      - v2-trigger.txt
+      - v23-trigger.txt
       - .github/workflows/skibidi-build.yml
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,39 +18,93 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.1'
-      - name: Restore original v1 source payload
+
+      - name: Restore v1 baseline
         run: |
           cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
           tar -xzf payload.tar.gz
-      - name: Overlay v2 source rewrite
+
+      - name: Restore v2 separate-mob rewrite
         run: |
           cat v2p00.txt v2p01.txt v2p02.txt v2p03.txt v2p04.txt | base64 -d > v2-patch.tar.gz
           tar -xzf v2-patch.tar.gz
           cp -a skibidi-v2-patch/. skibidi-gh-build-min/
           rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           rm -f skibidi-gh-build-min/src/main/resources/data/minecraft/tags/entity_type/zombies.json
-      - name: Overlay final renderer fixes
+
+      - name: Restore renderer corrections
         run: |
           cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-      - name: Overlay v2.2 laser audio patch
+
+      - name: Restore v2.2 laser sound code
         run: |
           base64 -d skibidi-v22-codepatch.b64 > v22-patch.tar.gz
           tar -xzf v22-patch.tar.gz
           cp -a skibidi-v2.2-codepatch/. skibidi-gh-build-min/
-      - name: Build and remap
+
+      - name: Overlay v2.3 real laser combat
+        run: |
+          cat v23p00.txt v23p01.txt v23p02.txt | base64 -d > v23-patch.tar.gz
+          echo "3b1191e752ae08cea960d71c6e4fb129975beb710b3e37a3b0467ff071464492  v23-patch.tar.gz" | sha256sum -c -
+          tar -xzf v23-patch.tar.gz
+          cp -a skibidi-v23-patch/. skibidi-gh-build-min/
+
+      - name: Static regression checks
+        working-directory: skibidi-gh-build-min
+        run: python3 tests/verify_v23.py
+
+      - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
-      - name: Verify laser sound and production jar
+
+      - name: Dedicated server smoke test
+        working-directory: skibidi-gh-build-min
         run: |
-          grep -q G_TOILET_LASERS_LOOP skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModSounds.java
-          grep -q GToiletLaserLoopSound skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/sound/SkibidiSoundController.java
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.2.0.jar | tee jar-contents-v22.txt
-          grep -q 'GToiletLaserLoopSound.class' jar-contents-v22.txt
+          mkdir -p run
+          echo "eula=true" > run/eula.txt
+          set +e
+          timeout 110s gradle runServer --no-daemon --no-configuration-cache > ../server-smoke.log 2>&1
+          code=$?
+          set -e
+          cat ../server-smoke.log
+          grep -q "Skibidi Toilet initialized" ../server-smoke.log
+          grep -q "Done (" ../server-smoke.log
+          ! grep -q "Minecraft Crash Report" ../server-smoke.log
+          ! grep -q "ExceptionInInitializerError" ../server-smoke.log
+          echo "server smoke exit code: $code"
+
+      - name: Client renderer smoke test
+        working-directory: skibidi-gh-build-min
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+          set +e
+          timeout 120s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-smoke.log 2>&1
+          code=$?
+          set -e
+          tail -n 250 ../client-smoke.log
+          grep -q "Skibidi Toilet initialized" ../client-smoke.log
+          ! grep -q "Minecraft Crash Report" ../client-smoke.log
+          ! grep -q "ExceptionInInitializerError" ../client-smoke.log
+          ! grep -q "Could not execute entrypoint" ../client-smoke.log
+          echo "client smoke exit code: $code"
+
+      - name: Inspect production JAR
+        run: |
+          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar | tee jar-contents-v23.txt
+          grep -q 'GToiletEntity.class' jar-contents-v23.txt
+          grep -q 'SkibidiRenderState.class' jar-contents-v23.txt
+          grep -q 'GToiletLaserLoopSound.class' jar-contents-v23.txt
+          ! grep -q 'SkibidiZombieRenderer.class' jar-contents-v23.txt
+
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v22-compiled
+          name: skibidi-v23-compiled
           path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.2.0.jar
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.2.0-sources.jar
-            jar-contents-v22.txt
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0-sources.jar
+            jar-contents-v23.txt
+            server-smoke.log
+            client-smoke.log
