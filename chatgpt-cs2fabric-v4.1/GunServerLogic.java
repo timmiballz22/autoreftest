@@ -81,7 +81,12 @@ public final class GunServerLogic {
 
         DamageSource bulletDamage = bulletDamageSource(level, player);
         for (Map.Entry<LivingEntity, Float> entry : accumulatedDamage.entrySet()) {
-            entry.getKey().hurtServer(level, bulletDamage, entry.getValue());
+            LivingEntity target = entry.getKey();
+            // Belt-and-suspenders with BYPASSES_COOLDOWN: clear the vanilla regeneration
+            // timer before and after each bullet, so high-RPM weapons never wait for i-frames.
+            target.invulnerableTime = 0;
+            target.hurtServer(level, bulletDamage, entry.getValue());
+            target.invulnerableTime = 0;
         }
     }
 
