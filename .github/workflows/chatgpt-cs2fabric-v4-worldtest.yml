@@ -1,0 +1,209 @@
+name: CS2 Fabric v0.4.0 real world-load test
+
+on:
+  push:
+    branches: [chatgpt-cs2fabric-v4-full-arsenal]
+    paths:
+      - '.github/workflows/chatgpt-cs2fabric-v4-worldtest.yml'
+      - 'chatgpt-cs2fabric-v4/**'
+  workflow_dispatch:
+
+jobs:
+  world-load:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct exact v0.4.0 source
+        shell: bash
+        run: |
+          {
+            cat chatgpt-cs2fabric/part01.b64
+            cat chatgpt-cs2fabric/part02.b64
+            cat chatgpt-cs2fabric/fix03/*.b64
+            cat chatgpt-cs2fabric/part04.b64
+            cat chatgpt-cs2fabric/part05.b64
+            cat chatgpt-cs2fabric/fix06/*.b64
+          } | tr -d '\n\r' | base64 -d > /tmp/cs2baseline.zip
+          echo "4ef90835de217c9eef9918473482f55f2b28dc1e5d45800420fcbf5b963d6ba3  /tmp/cs2baseline.zip" | sha256sum -c -
+          mkdir -p /tmp/cs2src
+          unzip -q /tmp/cs2baseline.zip -d /tmp/cs2src
+
+          cat chatgpt-cs2fabric-v4/payload/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/v4-overlay.zip
+          echo "2bceb372664c35c0391bd20d4db822efe4e2fedaf250fc355b164540840d9234  /tmp/v4-overlay.zip" | sha256sum -c -
+          unzip -qo /tmp/v4-overlay.zip -d /tmp/cs2src/cs2fabric
+
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("/tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/ModItems.java")
+          s = p.read_text()
+          s = s.replace('"glock_18", "Glock-18", 6.000F, 4.0F, 20, 120, 400,',
+                        '"glock_18", "Glock-18", 6.000F, 4.0F, 20, 60, 400,')
+          s = s.replace('"p2000", "P2000", 7.000F, 4.0F, 13, 52, 352,',
+                        '"p2000", "P2000", 7.000F, 4.0F, 13, 52, 353,')
+          s = s.replace('"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 352,',
+                        '"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 353,')
+          p.write_text(s)
+          PY
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Add production client task
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          cat >> build.gradle <<'GRADLE'
+
+          repositories {
+              maven {
+                  name = "Modrinth"
+                  url = uri("https://api.modrinth.com/maven")
+              }
+          }
+
+          configurations {
+              worldTestRuntime
+          }
+
+          dependencies {
+              worldTestRuntime "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+              worldTestRuntime "maven.modrinth:AANobbMI:rkdTcxoT"
+          }
+
+          tasks.register("prodClientWorldTest", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+              dependsOn tasks.named("remapJar")
+              mods.from(file("build/libs/cs2-fabric-${project.mod_version}.jar"))
+              mods.from(configurations.worldTestRuntime)
+              useXVFB = true
+              runDir = file("run-world-test")
+              programArgs.add("--quickPlaySingleplayer")
+              programArgs.add("cs2_world")
+              programArgs.add("--quickPlayPath")
+              programArgs.add("quickplay.json")
+          }
+          GRADLE
+
+      - name: Compile and remap
+        working-directory: /tmp/cs2src/cs2fabric
+        run: gradle --no-daemon clean build --stacktrace
+
+      - name: Generate a clean 1.21.11 world without external datapacks
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          mkdir -p run
+          printf 'eula=true\n' > run/eula.txt
+          gradle --no-daemon runServer --stacktrace > /tmp/worldgen-console.log 2>&1 &
+          gp=$!
+
+          ready=0
+          for i in $(seq 1 180); do
+            if [ -f run/logs/latest.log ] && grep -q 'Done (' run/logs/latest.log; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$gp" 2>/dev/null; then
+              echo "World generator exited before server reached Done"
+              cat /tmp/worldgen-console.log
+              [ -f run/logs/latest.log ] && cat run/logs/latest.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "World generator watchdog expired before a valid world was ready"
+            cat /tmp/worldgen-console.log
+            [ -f run/logs/latest.log ] && cat run/logs/latest.log
+            kill -TERM "$gp" 2>/dev/null || true
+            exit 1
+          fi
+
+          kill -TERM "$gp" 2>/dev/null || true
+          wait "$gp" || true
+
+          test -f run/world/level.dat
+          mkdir -p run-world-test/saves
+          cp -a run/world run-world-test/saves/cs2_world
+
+      - name: Load the world with the production remapped CS2 mod and Sodium
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          rm -f run-world-test/quickplay.json
+          gradle --no-daemon prodClientWorldTest --stacktrace > /tmp/worldload-console.log 2>&1 &
+          gp=$!
+
+          joined=0
+          for i in $(seq 1 210); do
+            if [ -s run-world-test/quickplay.json ]; then
+              joined=1
+              break
+            fi
+            if ! kill -0 "$gp" 2>/dev/null; then
+              echo "Minecraft exited before joining the singleplayer world"
+              cat /tmp/worldload-console.log
+              [ -f run-world-test/logs/latest.log ] && cat run-world-test/logs/latest.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ "$joined" -ne 1 ]; then
+            echo "World-load watchdog expired; dumping exact client logs"
+            cat /tmp/worldload-console.log
+            [ -f run-world-test/logs/latest.log ] && cat run-world-test/logs/latest.log
+            kill -TERM "$gp" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "===== QUICK PLAY JOIN RECORD ====="
+          cat run-world-test/quickplay.json
+          sleep 8
+
+          logs="/tmp/worldload-console.log"
+          if [ -f run-world-test/logs/latest.log ]; then
+            logs="$logs run-world-test/logs/latest.log"
+          fi
+
+          echo "===== DATA/REGISTRY/RESOURCE DIAGNOSTICS ====="
+          grep -Ein 'data pack|datapack|failed to load|registry|codec|parsing error|unknown registry|missing required|exception|error|cs2fabric' $logs || true
+
+          if grep -Eqi 'Errors in currently selected data packs|Failed to load datapacks|Failed to load data packs|Registry loading errors|Failed to parse.*data|Unknown registry element|Crash report saved|InvalidMixinException|MixinApplyError|ClassNotFoundException.*cs2fabric|Could not execute entrypoint' $logs; then
+            echo "World/data loading error detected"
+            kill -TERM "$gp" 2>/dev/null || true
+            wait "$gp" || true
+            exit 1
+          fi
+
+          if ! grep -Eqi 'sodium 0\.8\.14|Sodium' $logs; then
+            echo "Sodium was not observed in world-load test"
+            kill -TERM "$gp" 2>/dev/null || true
+            wait "$gp" || true
+            exit 1
+          fi
+
+          kill -TERM "$gp" 2>/dev/null || true
+          wait "$gp" || true
+          echo "Production client joined a real 1.21.11 world with no data-pack/registry startup failure."
+
+      - name: Upload world-load logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cs2-v0.4.0-world-load-logs
+          path: |
+            /tmp/worldgen-console.log
+            /tmp/worldload-console.log
+            /tmp/cs2src/cs2fabric/run/logs/latest.log
+            /tmp/cs2src/cs2fabric/run-world-test/logs/latest.log
+            /tmp/cs2src/cs2fabric/run-world-test/quickplay.json
+          if-no-files-found: ignore
