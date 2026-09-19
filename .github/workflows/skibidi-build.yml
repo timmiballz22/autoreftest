@@ -17,7 +17,8 @@ jobs:
           gradle-version: '9.5.1'
       - name: Decode source
         run: |
-          base64 -d skibidi-build-min.tar.gz.b64 > payload.tar.gz
+          cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
+          sha256sum payload.tar.gz
           tar -xzf payload.tar.gz
       - name: Build and remap
         working-directory: skibidi-gh-build-min
