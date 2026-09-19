@@ -1,13 +1,13 @@
-name: Skibidi Fabric v2.3.1 Build
+name: Skibidi Fabric v2.4 Build
 on:
   push:
     branches:
       - chatgpt-skibidi-build-20260919
     paths:
-      - v231-trigger.txt
+      - v240-trigger.txt
       - .github/workflows/skibidi-build.yml
 jobs:
-  build:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +18,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.1'
-      - name: Reconstruct v2.3 source
+
+      - name: Reconstruct v2.3 baseline
         run: |
           cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
           tar -xzf payload.tar.gz
@@ -37,50 +38,106 @@ jobs:
           mkdir -p v23-final
           tar -xzf v23-final.tar.gz -C v23-final
           cp -a v23-final/. skibidi-gh-build-min/
-      - name: Overlay any-light spawn patch
+
+      - name: Overlay v2.4 combat and spawn patch
         run: |
-          cp v231/ModEntityTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          cp v231/gradle.properties skibidi-gh-build-min/gradle.properties
-      - name: Verify spawn rule source
+          base64 -d skibidi-v240-patch.b64 > v240-patch.tar.gz
+          echo "0bc41e92aca5a01ce58674fa80e501c0631c102c5344609944ed8cc01cce83e5  v240-patch.tar.gz" | sha256sum -c -
+          tar -xzf v240-patch.tar.gz -C skibidi-gh-build-min
+
+      - name: Static regression checks
         working-directory: skibidi-gh-build-min
         run: |
-          grep -q 'mod_version=2.3.1' gradle.properties
-          grep -q 'SpawnPlacements.register' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'mod_version=2.4.0' gradle.properties
+          test -f src/main/resources/data/skibidi/damage_type/g_toilet_laser.json
+          grep -q 'skibidi:g_toilet_laser' src/main/resources/data/minecraft/tags/damage_type/no_knockback.json
           grep -q 'Mob::checkMobSpawnRules' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'BiomeSelectors.foundInOverworld()' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'BiomeModifications.addSpawn' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          ! grep -q 'checkMonsterSpawnRules' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'addOverworldSpawn(SKIBIDI, 100' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'addOverworldSpawn(SKIBIDI_KING, 8' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'addOverworldSpawn(G_TOILET, 4' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'addOverworldSpawn(G_TOILET_2, 2' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'addOverworldSpawn(G_TOILET_3, 1' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          ! grep -q 'RangedAttackGoal' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          ! grep -q 'implements RangedAttackMob' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q 'LASER_WARNING' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q 'previousVelocity' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q 'prismBetween' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          grep -q 'laserWarning' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
+          test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
+          test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
+
       - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
-      - name: Dedicated server startup test
+
+      - name: Dedicated server combat test
         working-directory: skibidi-gh-build-min
         run: |
           mkdir -p run
-          echo 'eula=true' > run/eula.txt
-          set +e
-          timeout 75s gradle runServer --no-daemon --no-configuration-cache > ../server-v231.log 2>&1
-          code=$?
-          set -e
-          tail -n 180 ../server-v231.log
-          grep -q 'Skibidi Toilet initialized' ../server-v231.log
-          grep -q 'Done (' ../server-v231.log
-          ! grep -q 'Minecraft Crash Report' ../server-v231.log
-          ! grep -q 'Could not execute entrypoint' ../server-v231.log
-          echo "server smoke exit code: $code"
-      - name: Inspect production jar
+          echo "eula=true" > run/eula.txt
+          python3 -m pip install --disable-pip-version-check -q pexpect
+          python3 - <<'PY' | tee ../server-v240.log
+          import pexpect, re, sys, time
+          child=pexpect.spawn(
+              'gradle',
+              ['runServer','--no-daemon','--no-configuration-cache','--console=plain'],
+              cwd='.', encoding='utf-8', timeout=210, echo=False
+          )
+          child.logfile=sys.stdout
+          child.expect(re.compile(r'Done \('))
+          child.sendline('gamerule doMobSpawning false')
+          child.sendline('forceload add 0 0 32 32')
+          child.sendline('scoreboard objectives add sktest dummy')
+          child.sendline('kill @e[tag=laser_target]')
+          child.sendline('kill @e[tag=laser_boss]')
+          child.sendline('summon minecraft:villager 8 200 24 {Tags:["laser_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('attribute @e[tag=laser_target,limit=1] minecraft:max_health base set 500')
+          child.sendline('data merge entity @e[tag=laser_target,limit=1] {Health:500.0f}')
+          child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["laser_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('attribute @e[tag=laser_boss,limit=1] minecraft:movement_speed base set 0')
+          time.sleep(4.5)
+          child.sendline('execute store result score #hp sktest run data get entity @e[tag=laser_target,limit=1] Health 10')
+          child.sendline('execute if score #hp sktest matches ..4999 run say LASER_DAMAGE_PASS')
+          child.expect(re.compile(r'\[Server\] LASER_DAMAGE_PASS'), timeout=30)
+          child.sendline('execute store result score #mx sktest run data get entity @e[tag=laser_target,limit=1] Motion[0] 100000')
+          child.sendline('execute store result score #my sktest run data get entity @e[tag=laser_target,limit=1] Motion[1] 100000')
+          child.sendline('execute store result score #mz sktest run data get entity @e[tag=laser_target,limit=1] Motion[2] 100000')
+          child.sendline('execute if score #mx sktest matches 0 if score #my sktest matches 0 if score #mz sktest matches 0 run say LASER_NO_KNOCKBACK_PASS')
+          child.expect(re.compile(r'\[Server\] LASER_NO_KNOCKBACK_PASS'), timeout=30)
+
+          child.sendline('kill @e[tag=laser_target]')
+          child.sendline('kill @e[tag=laser_boss]')
+          child.sendline('summon minecraft:villager 0 200 1 {Tags:["melee_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["melee_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('attribute @e[tag=melee_boss,limit=1] minecraft:movement_speed base set 0')
+          time.sleep(3.0)
+          child.sendline('execute unless entity @e[tag=melee_target] run say MELEE_STILL_WORKS_PASS')
+          child.expect(re.compile(r'\[Server\] MELEE_STILL_WORKS_PASS'), timeout=30)
+          child.sendline('stop')
+          child.expect(pexpect.EOF, timeout=90)
+          PY
+          grep -q '\[Server\] LASER_DAMAGE_PASS' ../server-v240.log
+          grep -q '\[Server\] LASER_NO_KNOCKBACK_PASS' ../server-v240.log
+          grep -q '\[Server\] MELEE_STILL_WORKS_PASS' ../server-v240.log
+          ! grep -q 'Minecraft Crash Report' ../server-v240.log
+
+      - name: Inspect production JAR
         run: |
-          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar
-          unzip -p skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar fabric.mod.json | grep -q '"version": "2.3.1"'
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar | tee jar-code-v231.txt
-          grep -q 'ModEntityTypes.class' jar-code-v231.txt
-          grep -q 'GToiletEntity.class' jar-code-v231.txt
-          grep -q 'GToiletLaserLoopSound.class' jar-code-v231.txt
-          ! grep -q 'SkibidiZombieRenderer.class' jar-code-v231.txt
+          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
+          unzip -p skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar fabric.mod.json | grep -q '"version": "2.4.0"'
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar | tee jar-v240.txt
+          grep -q 'ModDamageTypes.class' jar-v240.txt
+          grep -q 'GToiletEntity.class' jar-v240.txt
+          grep -q 'SkibidiAttachments.class' jar-v240.txt
+          grep -q 'data/skibidi/damage_type/g_toilet_laser.json' jar-v240.txt
+          grep -q 'data/minecraft/tags/damage_type/no_knockback.json' jar-v240.txt
+          ! grep -q 'SkibidiZombieRenderer.class' jar-v240.txt
+
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v231-code
+          name: skibidi-v240-code
           path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar
-            server-v231.log
-            jar-code-v231.txt
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
+            server-v240.log
+            jar-v240.txt
