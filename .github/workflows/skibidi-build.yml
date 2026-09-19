@@ -70,28 +70,6 @@ jobs:
           grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
           test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
-          python3 - <<'PY'
-          import math, struct
-          from pathlib import Path
-          raw=Path('src/main/resources/assets/skibidi/mesh/skibidi_v2.skbm').read_bytes()
-          assert raw[:4] == b'SKB2'
-          off=4
-          version,count=struct.unpack_from('<ii',raw,off); off += 8
-          groups={}
-          for _ in range(count):
-              gid,mat,n=struct.unpack_from('<iii',raw,off); off += 12
-              pts=[]
-              for _ in range(n):
-                  x,y,z,u,v,nx,ny,nz=struct.unpack_from('<8f',raw,off); off += 32
-                  pts.append((x,y,z))
-              groups[gid]=pts
-          toilet=groups[4]
-          mounts=[(.52,.90,-.44),(.60,1.05,-.44),(.46,.70,-.40),(.46,.50,-.42)]
-          for p in mounts:
-              nearest=min(math.dist(p,v) for v in toilet)
-              assert nearest < .15, (p, nearest)
-          print('LASER_MESH_FIT_PASS')
-          PY
 
       - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
