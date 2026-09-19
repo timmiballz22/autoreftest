@@ -14,10 +14,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct source archive
+      - name: Reconstruct and verify source archive
         shell: bash
         run: |
-          cat chatgpt-cs2fabric/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/cs2fabric-source.zip
+          {
+            cat chatgpt-cs2fabric/part01.b64
+            cat chatgpt-cs2fabric/part02.b64
+            cat chatgpt-cs2fabric/fix03/*.b64
+            cat chatgpt-cs2fabric/part04.b64
+            cat chatgpt-cs2fabric/part05.b64
+            cat chatgpt-cs2fabric/fix06/*.b64
+          } | tr -d '\n\r' | base64 -d > /tmp/cs2fabric-source.zip
+          echo "4ef90835de217c9eef9918473482f55f2b28dc1e5d45800420fcbf5b963d6ba3  /tmp/cs2fabric-source.zip" | sha256sum -c -
+          test "$(stat -c%s /tmp/cs2fabric-source.zip)" = "26572"
           mkdir -p /tmp/cs2src
           unzip -q /tmp/cs2fabric-source.zip -d /tmp/cs2src
           test -f /tmp/cs2src/cs2fabric/build.gradle
