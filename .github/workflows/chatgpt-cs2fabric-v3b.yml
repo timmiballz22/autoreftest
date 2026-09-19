@@ -1,4 +1,4 @@
-name: Build CS2 Fabric Animated V3
+name: Build and launch-test CS2 Fabric Animated
 
 on:
   push:
@@ -29,13 +29,38 @@ jobs:
           mkdir -p /tmp/cs2src
           unzip -q /tmp/cs2baseline.zip -d /tmp/cs2src
 
-      - name: Apply animated Java overlay
+      - name: Apply animated code and missing mixin fix
         shell: bash
         run: |
           cat chatgpt-cs2fabric-v3b/code/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/code-overlay.zip
           echo "6385b906d24ef1afa59d4285ca12310430244f8f6eeb009782d688f9ee26fd55  /tmp/code-overlay.zip" | sha256sum -c -
           unzip -qo /tmp/code-overlay.zip -d /tmp/cs2src/cs2fabric
-          find /tmp/cs2src/cs2fabric/src -name '*.java' | sort
+          cp chatgpt-cs2fabric-v3b/patch/MinecraftInputMixin.java /tmp/cs2src/cs2fabric/src/client/java/dev/cs2fabric/mixin/MinecraftInputMixin.java
+          sed -i 's/^mod_version=.*/mod_version=0.3.1/' /tmp/cs2src/cs2fabric/gradle.properties
+
+          cat >> /tmp/cs2src/cs2fabric/build.gradle <<'GRADLE'
+
+          repositories {
+              maven {
+                  name = "Modrinth"
+                  url = uri("https://api.modrinth.com/maven")
+              }
+          }
+
+          dependencies {
+              productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+              productionRuntimeMods "maven.modrinth:AANobbMI:rkdTcxoT"
+          }
+
+          tasks.register("prodClient", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+              dependsOn tasks.named("remapJar")
+              mods.from(file("build/libs/cs2-fabric-${project.mod_version}.jar"))
+              useXVFB = true
+              runDir = file("run-prod")
+          }
+          GRADLE
+
+          test -f /tmp/cs2src/cs2fabric/src/client/java/dev/cs2fabric/mixin/MinecraftInputMixin.java
 
       - uses: actions/setup-java@v4
         with:
@@ -46,18 +71,89 @@ jobs:
         with:
           gradle-version: '9.5.1'
 
-      - name: Compile and remap
+      - name: Compile and remap production JAR
         working-directory: /tmp/cs2src/cs2fabric
         run: gradle --no-daemon clean build --stacktrace
 
-      - name: Inspect classes
+      - name: Audit mixin config against production JAR
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: python
+        run: |
+          import json, zipfile, pathlib, sys
+          jar = pathlib.Path("build/libs/cs2-fabric-0.3.1.jar")
+          with zipfile.ZipFile(jar) as z:
+              names = set(z.namelist())
+              cfg = json.loads(z.read("cs2fabric.client.mixins.json"))
+              package = cfg["package"].replace(".", "/")
+              missing = []
+              for group in ("mixins", "client", "server"):
+                  for cls in cfg.get(group, []):
+                      entry = f"{package}/{cls.replace('.', '/')}.class"
+                      if entry not in names:
+                          missing.append(entry)
+              if missing:
+                  print("MISSING MIXINS:", *missing, sep="\n")
+                  sys.exit(1)
+              print("All declared mixins exist:")
+              for cls in cfg.get("client", []):
+                  print(" -", cls)
+              assert "dev/cs2fabric/mixin/MinecraftInputMixin.class" in names
+
+      - name: Install XVFB
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
+
+      - name: Production-launch test with Sodium 0.8.14
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM 90s gradle --no-daemon prodClient --stacktrace > /tmp/prodclient-console.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/prodclient-console.log
+          if [ -f run-prod/logs/latest.log ]; then
+            echo "===== latest.log ====="
+            cat run-prod/logs/latest.log
+          fi
+
+          # 124 means timeout reached while the client was still alive, which is expected for an interactive client.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+            echo "Production client exited unexpectedly with $code"
+            exit "$code"
+          fi
+
+          logs="/tmp/prodclient-console.log"
+          if [ -f run-prod/logs/latest.log ]; then logs="$logs run-prod/logs/latest.log"; fi
+
+          if grep -Eqi 'InvalidMixinException|MixinApplyError|MixinTransformerError|ClassNotFoundException.*cs2fabric|Could not execute entrypoint|Failed to start|Exception in thread "main"|Crash report saved' $logs; then
+            echo "Detected startup failure in production launch logs"
+            exit 1
+          fi
+
+          if ! grep -Eqi 'sodium|Sodium' $logs; then
+            echo "Sodium was not observed in production launch logs"
+            exit 1
+          fi
+
+          echo "Production client survived launch window with Sodium and no mixin/entrypoint startup crash."
+
+      - name: Inspect production JAR
         working-directory: /tmp/cs2src/cs2fabric
         run: |
-          ls -lah build/libs
-          jar tf build/libs/cs2-fabric-0.1.0.jar | grep -E 'GunAnimationState|GunRenderTransforms|ItemInHandRendererMixin|HumanoidModelMixin|ModSounds' || exit 1
+          ls -lah build/libs/cs2-fabric-0.3.1.jar
+          jar tf build/libs/cs2-fabric-0.3.1.jar | grep -E 'MinecraftInputMixin|GunAnimationState|GunRenderTransforms|ItemInHandRendererMixin|HumanoidModelMixin|ModSounds'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cs2-fabric-v3-compiled
-          path: /tmp/cs2src/cs2fabric/build/libs/cs2-fabric-0.1.0.jar
+          name: cs2-fabric-v3.1-production
+          path: /tmp/cs2src/cs2fabric/build/libs/cs2-fabric-0.3.1.jar
           if-no-files-found: error
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cs2-fabric-v3.1-launch-logs
+          path: |
+            /tmp/prodclient-console.log
+            /tmp/cs2src/cs2fabric/run-prod/logs/latest.log
+          if-no-files-found: ignore
