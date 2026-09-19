@@ -33,18 +33,26 @@ jobs:
         run: |
           cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          sed -i 's/mod_version=2.0.0/mod_version=2.1.0/' skibidi-gh-build-min/gradle.properties
+      - name: Overlay v2.2 laser audio patch
+        run: |
+          base64 -d skibidi-v22-patch.b64 > v22-patch.tar.gz
+          tar -xzf v22-patch.tar.gz
+          cp -a skibidi-v2.2-patch/. skibidi-gh-build-min/
       - name: Build and remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
-      - name: Inspect production jar
+      - name: Verify laser sound and production jar
         run: |
-          ls -lah skibidi-gh-build-min/build/libs/
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.1.0.jar | tee jar-contents-v2.txt
+          test -f skibidi-gh-build-min/src/main/resources/assets/skibidi/sounds/g_toilet_lasers.ogg
+          grep -q G_TOILET_LASERS_LOOP skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModSounds.java
+          grep -q GToiletLaserLoopSound skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/sound/SkibidiSoundController.java
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.2.0.jar | tee jar-contents-v22.txt
+          grep -q 'assets/skibidi/sounds/g_toilet_lasers.ogg' jar-contents-v22.txt
+          grep -q 'GToiletLaserLoopSound.class' jar-contents-v22.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v2-compiled
+          name: skibidi-v22-compiled
           path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.1.0.jar
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.1.0-sources.jar
-            jar-contents-v2.txt
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.2.0.jar
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.2.0-sources.jar
+            jar-contents-v22.txt
