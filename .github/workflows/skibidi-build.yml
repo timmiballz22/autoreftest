@@ -100,6 +100,7 @@ jobs:
           # Long-range angled target proves the laser aims at a non-axis-aligned location.
           child.sendline('summon minecraft:villager 8 200 24 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
           child.expect(re.compile(r'Summoned new Villager'), timeout=30)
+          time.sleep(1.0)
           child.sendline('attribute @e[type=minecraft:villager,limit=1] minecraft:max_health base set 500')
           child.expect(re.compile(r'base value.*500\.0'), timeout=30)
           child.sendline('data merge entity @e[type=minecraft:villager,limit=1] {Health:500.0f}')
@@ -107,6 +108,7 @@ jobs:
 
           child.sendline('summon skibidi:g_toilet_2 0 200 0 {NoGravity:1b,PersistenceRequired:1b}')
           child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
+          time.sleep(1.0)
           child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
           child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
 
@@ -133,8 +135,10 @@ jobs:
           # Inside 3 blocks, laser startup is disabled; inherited zombie melee must still kill.
           child.sendline('summon minecraft:villager 0 200 1 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
           child.expect(re.compile(r'Summoned new Villager'), timeout=30)
+          time.sleep(1.0)
           child.sendline('summon skibidi:g_toilet_2 0 200 0 {NoGravity:1b,PersistenceRequired:1b}')
           child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
+          time.sleep(1.0)
           child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
           child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
           time.sleep(10.0)
