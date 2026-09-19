@@ -45,6 +45,6 @@ jobs:
         with:
           name: skibidi-v2-compiled
           path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.0.0.jar
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.1.0.jar
             skibidi-gh-build-min/build/libs/skibidi-toilet-2.1.0-sources.jar
             jar-contents-v2.txt
