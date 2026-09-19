@@ -157,26 +157,56 @@ public final class SkibidiMesh {
         float pitchDegrees,
         boolean rotateAroundHead
     ) {
-        for (int i = 0; i < vertices.length; i += 8) {
-            emitVertex(
-                pose,
-                buffer,
-                light,
-                overlay,
-                scale,
-                yawDegrees,
-                pitchDegrees,
-                rotateAroundHead,
-                vertices[i],
-                vertices[i + 1],
-                vertices[i + 2],
-                vertices[i + 3],
-                vertices[i + 4],
-                vertices[i + 5],
-                vertices[i + 6],
-                vertices[i + 7]
-            );
+        /*
+         * RenderTypes.entityCutoutNoCull() uses Minecraft's NEW_ENTITY QUADS
+         * vertex pipeline. The source glTF is a TRIANGLES mesh.
+         *
+         * Feeding A,B,C,A,B,C... directly into a QUADS buffer makes Minecraft
+         * group unrelated triangle vertices four-at-a-time, visibly shredding
+         * the model. Convert each source triangle A,B,C into the degenerate
+         * quad A,B,C,C. Minecraft then produces:
+         *   triangle 1: A,B,C  (the original face)
+         *   triangle 2: C,C,A  (zero-area, invisible)
+         * so the imported glTF geometry is preserved exactly.
+         */
+        for (int i = 0; i < vertices.length; i += 24) {
+            emitPackedVertex(vertices, i, pose, buffer, light, overlay, scale, yawDegrees, pitchDegrees, rotateAroundHead);
+            emitPackedVertex(vertices, i + 8, pose, buffer, light, overlay, scale, yawDegrees, pitchDegrees, rotateAroundHead);
+            emitPackedVertex(vertices, i + 16, pose, buffer, light, overlay, scale, yawDegrees, pitchDegrees, rotateAroundHead);
+            emitPackedVertex(vertices, i + 16, pose, buffer, light, overlay, scale, yawDegrees, pitchDegrees, rotateAroundHead);
         }
+    }
+
+    private static void emitPackedVertex(
+        float[] vertices,
+        int i,
+        PoseStack.Pose pose,
+        VertexConsumer buffer,
+        int light,
+        int overlay,
+        float scale,
+        float yawDegrees,
+        float pitchDegrees,
+        boolean rotateAroundHead
+    ) {
+        emitVertex(
+            pose,
+            buffer,
+            light,
+            overlay,
+            scale,
+            yawDegrees,
+            pitchDegrees,
+            rotateAroundHead,
+            vertices[i],
+            vertices[i + 1],
+            vertices[i + 2],
+            vertices[i + 3],
+            vertices[i + 4],
+            vertices[i + 5],
+            vertices[i + 6],
+            vertices[i + 7]
+        );
     }
 
     private static Map<Integer, MeshPart> load() throws IOException {
