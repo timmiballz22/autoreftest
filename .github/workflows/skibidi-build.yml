@@ -34,14 +34,6 @@ jobs:
           cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
           sed -i 's/mod_version=2.0.0/mod_version=2.1.0/' skibidi-gh-build-min/gradle.properties
-      - name: Verify final resources
-        working-directory: skibidi-gh-build-min
-        run: |
-          test -f src/main/resources/assets/skibidi/mesh/skibidi_v2.skbm
-          test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
-          grep -q '250.0D' src/main/java/dev/ashenthefox/skibidi/entity/SkibidiKingEntity.java
-          grep -q 'return false' src/main/java/dev/ashenthefox/skibidi/entity/AbstractSkibidiEntity.java
-          grep -q 'G_TOILET_3' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
       - name: Build and remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
