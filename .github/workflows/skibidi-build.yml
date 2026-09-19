@@ -44,6 +44,7 @@ jobs:
           base64 -d skibidi-v240-patch.b64 > v240-patch.tar.gz
           echo "06fb975517be0be8f0a7ce5a73b5a7d7b33dc3dc33897e11d6c47cc8236d4f5d  v240-patch.tar.gz" | sha256sum -c -
           tar -xzf v240-patch.tar.gz -C skibidi-gh-build-min
+          cp v240/ModDamageTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModDamageTypes.java
 
       - name: Static regression checks
         working-directory: skibidi-gh-build-min
