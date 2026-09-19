@@ -29,6 +29,11 @@ jobs:
           cp -a skibidi-v2-patch/. skibidi-gh-build-min/
           rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           rm -f skibidi-gh-build-min/src/main/resources/data/minecraft/tags/entity_type/zombies.json
+      - name: Overlay final renderer fixes
+        run: |
+          cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          sed -i 's/mod_version=2.0.0/mod_version=2.1.0/' skibidi-gh-build-min/gradle.properties
       - name: Generate corrected model assets
         working-directory: skibidi-gh-build-min
         run: |
@@ -44,11 +49,11 @@ jobs:
       - name: Inspect production jar
         run: |
           ls -lah skibidi-gh-build-min/build/libs/
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.0.0.jar | tee jar-contents-v2.txt
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.1.0.jar | tee jar-contents-v2.txt
       - uses: actions/upload-artifact@v4
         with:
           name: skibidi-v2-compiled
           path: |
             skibidi-gh-build-min/build/libs/skibidi-toilet-2.0.0.jar
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.0.0-sources.jar
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.1.0-sources.jar
             jar-contents-v2.txt
