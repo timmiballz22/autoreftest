@@ -1,1 +1,1 @@
-upload final skibidi v2.1 jar
+build skibidi v2.2 laser sound final
