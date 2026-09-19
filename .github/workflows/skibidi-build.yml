@@ -125,7 +125,10 @@ jobs:
                       x,y,z=pos[i]; nx,ny,nz=nor[i]; u,v=uv[i]
                       groups[gid]['verts'].append((x,y,z,u,v,nx,ny,nz))
 
-          assert [len(groups[i]['verts']) for i in range(5)] == [3282,72,72,18,720]
+          counts=[len(groups[i]['verts']) for i in range(5)]
+          print('generated group counts',counts,flush=True)
+          if counts != [3282,72,72,18,720]:
+              raise RuntimeError(f'unexpected group counts: {counts}')
           with out.open('wb') as f:
               f.write(b'SKB2')
               f.write(struct.pack('<ii',2,5))
@@ -134,6 +137,7 @@ jobs:
                   f.write(struct.pack('<iii',gid,part['material'],len(part['verts'])))
                   for vert in part['verts']:
                       f.write(struct.pack('<8f',*vert))
+          print('wrote mesh bytes',out.stat().st_size,flush=True)
           PY
 
       - name: Validate exact model reconstruction
