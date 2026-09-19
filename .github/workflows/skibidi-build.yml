@@ -1,0 +1,28 @@
+name: Skibidi Fabric Build
+on:
+  push:
+    branches:
+      - chatgpt-skibidi-build-20260919
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+      - name: Decode source
+        run: |
+          base64 -d skibidi-build-min.tar.gz.b64 > payload.tar.gz
+          tar -xzf payload.tar.gz
+      - name: Build and remap
+        working-directory: skibidi-gh-build-min
+        run: gradle build --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skibidi-compiled
+          path: skibidi-gh-build-min/build/libs/*.jar
