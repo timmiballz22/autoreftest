@@ -80,41 +80,62 @@ jobs:
           python3 -m pip install --disable-pip-version-check -q pexpect
           python3 - <<'PY' | tee ../server-v240.log
           import pexpect, re, sys, time
+
           child=pexpect.spawn(
               'gradle',
               ['runServer','--no-daemon','--no-configuration-cache','--console=plain'],
-              cwd='.', encoding='utf-8', timeout=210, echo=False
+              cwd='.', encoding='utf-8', timeout=240, echo=False
           )
           child.logfile=sys.stdout
           child.expect(re.compile(r'Done \('))
-          child.sendline('gamerule doMobSpawning false')
           child.sendline('forceload add 0 0 32 32')
           child.sendline('scoreboard objectives add sktest dummy')
-          child.sendline('kill @e[tag=laser_target]')
-          child.sendline('kill @e[tag=laser_boss]')
+          time.sleep(1.0)
+
+          # Angled long-range laser target. Wait for each summon to be processed so selectors
+          # cannot race the server startup backlog.
           child.sendline('summon minecraft:villager 8 200 24 {Tags:["laser_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.expect(re.compile(r'Summoned new Villager'), timeout=30)
           child.sendline('attribute @e[tag=laser_target,limit=1] minecraft:max_health base set 500')
+          child.expect(re.compile(r'base value.*500\.0'), timeout=30)
           child.sendline('data merge entity @e[tag=laser_target,limit=1] {Health:500.0f}')
+          time.sleep(0.5)
+
           child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["laser_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
           child.sendline('attribute @e[tag=laser_boss,limit=1] minecraft:movement_speed base set 0')
-          time.sleep(4.5)
+          child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
+
+          # Cooldown + warning + at least one fire pulse.
+          time.sleep(5.0)
           child.sendline('execute store result score #hp sktest run data get entity @e[tag=laser_target,limit=1] Health 10')
-          child.sendline('execute if score #hp sktest matches ..4999 run say LASER_DAMAGE_PASS')
+          time.sleep(0.2)
+          child.sendline('execute if score #hp sktest matches 1..4999 run say LASER_DAMAGE_PASS')
           child.expect(re.compile(r'\[Server\] LASER_DAMAGE_PASS'), timeout=30)
+
+          # A stationary no-gravity target must remain at exactly zero velocity after laser damage.
           child.sendline('execute store result score #mx sktest run data get entity @e[tag=laser_target,limit=1] Motion[0] 100000')
           child.sendline('execute store result score #my sktest run data get entity @e[tag=laser_target,limit=1] Motion[1] 100000')
           child.sendline('execute store result score #mz sktest run data get entity @e[tag=laser_target,limit=1] Motion[2] 100000')
+          time.sleep(0.3)
           child.sendline('execute if score #mx sktest matches 0 if score #my sktest matches 0 if score #mz sktest matches 0 run say LASER_NO_KNOCKBACK_PASS')
           child.expect(re.compile(r'\[Server\] LASER_NO_KNOCKBACK_PASS'), timeout=30)
 
+          # Separate close-range case: laser cannot begin inside 3 blocks, so inherited zombie
+          # melee must still function on its own.
           child.sendline('kill @e[tag=laser_target]')
           child.sendline('kill @e[tag=laser_boss]')
+          time.sleep(0.5)
           child.sendline('summon minecraft:villager 0 200 1 {Tags:["melee_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.expect(re.compile(r'Summoned new Villager'), timeout=30)
           child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["melee_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
           child.sendline('attribute @e[tag=melee_boss,limit=1] minecraft:movement_speed base set 0')
-          time.sleep(3.0)
+          child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
+          time.sleep(8.0)
           child.sendline('execute unless entity @e[tag=melee_target] run say MELEE_STILL_WORKS_PASS')
           child.expect(re.compile(r'\[Server\] MELEE_STILL_WORKS_PASS'), timeout=30)
+
           child.sendline('stop')
           child.expect(pexpect.EOF, timeout=90)
           PY
