@@ -1,0 +1,190 @@
+name: CS2 Fabric v0.4.0 official client gametest
+
+on:
+  push:
+    branches: [chatgpt-cs2fabric-v4-full-arsenal]
+    paths:
+      - '.github/workflows/chatgpt-cs2fabric-v4-gametest.yml'
+      - 'chatgpt-cs2fabric-v4/**'
+  workflow_dispatch:
+
+jobs:
+  client-gametest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct exact v0.4.0 source
+        shell: bash
+        run: |
+          {
+            cat chatgpt-cs2fabric/part01.b64
+            cat chatgpt-cs2fabric/part02.b64
+            cat chatgpt-cs2fabric/fix03/*.b64
+            cat chatgpt-cs2fabric/part04.b64
+            cat chatgpt-cs2fabric/part05.b64
+            cat chatgpt-cs2fabric/fix06/*.b64
+          } | tr -d '\n\r' | base64 -d > /tmp/cs2baseline.zip
+          echo "4ef90835de217c9eef9918473482f55f2b28dc1e5d45800420fcbf5b963d6ba3  /tmp/cs2baseline.zip" | sha256sum -c -
+          mkdir -p /tmp/cs2src
+          unzip -q /tmp/cs2baseline.zip -d /tmp/cs2src
+
+          cat chatgpt-cs2fabric-v4/payload/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/v4-overlay.zip
+          echo "2bceb372664c35c0391bd20d4db822efe4e2fedaf250fc355b164540840d9234  /tmp/v4-overlay.zip" | sha256sum -c -
+          unzip -qo /tmp/v4-overlay.zip -d /tmp/cs2src/cs2fabric
+
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("/tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/ModItems.java")
+          s = p.read_text()
+          s = s.replace('"glock_18", "Glock-18", 6.000F, 4.0F, 20, 120, 400,',
+                        '"glock_18", "Glock-18", 6.000F, 4.0F, 20, 60, 400,')
+          s = s.replace('"p2000", "P2000", 7.000F, 4.0F, 13, 52, 352,',
+                        '"p2000", "P2000", 7.000F, 4.0F, 13, 52, 353,')
+          s = s.replace('"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 352,',
+                        '"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 353,')
+          p.write_text(s)
+          PY
+
+      - name: Add official Fabric client GameTest
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          cat >> build.gradle <<'GRADLE'
+
+          fabricApi {
+              configureTests {
+                  createSourceSet = true
+                  modId = "cs2fabric-gametest"
+                  enableGameTests = true
+                  enableClientGameTests = true
+                  eula = true
+              }
+          }
+
+          dependencies {
+              productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+          }
+
+          tasks.register("runProductionClientGameTest", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+              dependsOn tasks.named("remapJar")
+              jvmArgs.add("-Dfabric.client.gametest")
+              jvmArgs.add("-Dfabric.client.gametest.disableNetworkSynchronizer=true")
+              useXVFB = true
+          }
+          GRADLE
+
+          mkdir -p src/gametest/java/dev/cs2fabric/test
+          mkdir -p src/gametest/resources
+
+          cat > src/gametest/resources/fabric.mod.json <<'JSON'
+          {
+            "schemaVersion": 1,
+            "id": "cs2fabric-gametest",
+            "version": "1.0.0",
+            "name": "CS2 Fabric Client GameTest",
+            "environment": "*",
+            "entrypoints": {
+              "fabric-client-gametest": [
+                "dev.cs2fabric.test.Cs2FabricWorldLoadGameTest"
+              ]
+            },
+            "depends": {
+              "cs2fabric": "*",
+              "fabric-api": "*",
+              "minecraft": "~1.21.11",
+              "java": ">=21"
+            }
+          }
+          JSON
+
+          cat > src/gametest/java/dev/cs2fabric/test/Cs2FabricWorldLoadGameTest.java <<'JAVA'
+          package dev.cs2fabric.test;
+
+          import dev.cs2fabric.ModItems;
+          import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
+          import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
+          import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+          import net.minecraft.core.registries.BuiltInRegistries;
+          import net.minecraft.resources.ResourceLocation;
+
+          @SuppressWarnings("UnstableApiUsage")
+          public final class Cs2FabricWorldLoadGameTest implements FabricClientGameTest {
+              @Override
+              public void runTest(ClientGameTestContext context) {
+                  if (ModItems.ALL_GUNS.size() != 34) {
+                      throw new AssertionError("Expected 34 guns, got " + ModItems.ALL_GUNS.size());
+                  }
+
+                  ResourceLocation ak = ResourceLocation.fromNamespaceAndPath("cs2fabric", "ak_47");
+                  if (!BuiltInRegistries.ITEM.containsKey(ak)) {
+                      throw new AssertionError("AK-47 is missing from the item registry");
+                  }
+
+                  try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
+                      singleplayer.getClientLevel().waitForChunksRender();
+
+                      ResourceLocation ammo = ResourceLocation.fromNamespaceAndPath("cs2fabric", "ammo");
+                      if (!BuiltInRegistries.ITEM.containsKey(ammo)) {
+                          throw new AssertionError("Ammo item disappeared after integrated server load");
+                      }
+
+                      context.takeScreenshot("cs2fabric-world-loaded");
+                  }
+              }
+          }
+          JAVA
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Install headless display dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb libflite1
+
+      - name: Run development client GameTest
+        working-directory: /tmp/cs2src/cs2fabric
+        env:
+          ALSOFT_DRIVERS: "null"
+        run: gradle --no-daemon runClientGameTest --stacktrace
+
+      - name: Build remapped production JAR
+        working-directory: /tmp/cs2src/cs2fabric
+        run: gradle --no-daemon build --stacktrace
+
+      - name: Run production client GameTest
+        working-directory: /tmp/cs2src/cs2fabric
+        env:
+          ALSOFT_DRIVERS: "null"
+        run: gradle --no-daemon runProductionClientGameTest --stacktrace
+
+      - name: Scan GameTest logs for datapack/registry failures
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          find build/run run -type f -name '*.log' -print 2>/dev/null || true
+          logs=$(find build/run run -type f -name '*.log' -print 2>/dev/null | tr '\n' ' ')
+          if [ -n "$logs" ]; then
+            grep -Ein 'data pack|datapack|failed to load|registry loading errors|unknown registry|failed to parse|codec|crash report|cs2fabric' $logs || true
+            if grep -Eqi 'Errors in currently selected data packs|Failed to load datapacks|Failed to load data packs|Registry loading errors|Unknown registry element|Failed to parse.*data|Crash report saved|InvalidMixinException|MixinApplyError|ClassNotFoundException.*cs2fabric|Could not execute entrypoint' $logs; then
+              echo "Detected a real datapack/registry/startup failure"
+              exit 1
+            fi
+          fi
+
+      - name: Upload GameTest evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cs2-v0.4.0-official-gametest-evidence
+          path: |
+            /tmp/cs2src/cs2fabric/build/run/
+            /tmp/cs2src/cs2fabric/run/
+            /tmp/cs2src/cs2fabric/build/libs/cs2-fabric-0.4.0.jar
+          if-no-files-found: ignore
