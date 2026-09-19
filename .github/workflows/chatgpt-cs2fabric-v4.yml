@@ -1,0 +1,183 @@
+name: Build and launch-test CS2 Fabric Full Arsenal v0.4.0
+
+on:
+  push:
+    branches: [chatgpt-cs2fabric-v4-full-arsenal]
+    paths:
+      - 'chatgpt-cs2fabric-v4/**'
+      - '.github/workflows/chatgpt-cs2fabric-v4.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified v0.3 baseline
+        shell: bash
+        run: |
+          {
+            cat chatgpt-cs2fabric/part01.b64
+            cat chatgpt-cs2fabric/part02.b64
+            cat chatgpt-cs2fabric/fix03/*.b64
+            cat chatgpt-cs2fabric/part04.b64
+            cat chatgpt-cs2fabric/part05.b64
+            cat chatgpt-cs2fabric/fix06/*.b64
+          } | tr -d '\n\r' | base64 -d > /tmp/cs2baseline.zip
+          echo "4ef90835de217c9eef9918473482f55f2b28dc1e5d45800420fcbf5b963d6ba3  /tmp/cs2baseline.zip" | sha256sum -c -
+          mkdir -p /tmp/cs2src
+          unzip -q /tmp/cs2baseline.zip -d /tmp/cs2src
+
+      - name: Apply full-arsenal v0.4.0 code overlay
+        shell: bash
+        run: |
+          cat chatgpt-cs2fabric-v4/payload/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/v4-overlay.zip
+          echo "2bceb372664c35c0391bd20d4db822efe4e2fedaf250fc355b164540840d9234  /tmp/v4-overlay.zip" | sha256sum -c -
+          unzip -qo /tmp/v4-overlay.zip -d /tmp/cs2src/cs2fabric
+
+          # Add production runtime mods only for the launch test.
+          cat >> /tmp/cs2src/cs2fabric/build.gradle <<'GRADLE'
+
+          repositories {
+              maven {
+                  name = "Modrinth"
+                  url = uri("https://api.modrinth.com/maven")
+              }
+          }
+
+          dependencies {
+              productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+              productionRuntimeMods "maven.modrinth:AANobbMI:rkdTcxoT"
+          }
+
+          tasks.register("prodClient", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+              dependsOn tasks.named("remapJar")
+              mods.from(file("build/libs/cs2-fabric-${project.mod_version}.jar"))
+              useXVFB = true
+              runDir = file("run-prod")
+          }
+          GRADLE
+
+          grep '^mod_version=0.4.0$' /tmp/cs2src/cs2fabric/gradle.properties
+          grep -q 'public static final List<GunItem> ALL_GUNS' /tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/ModItems.java
+          grep -q 'renderTracer' /tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/GunServerLogic.java
+          grep -q 'NEXT_SHOT_NANOS' /tmp/cs2src/cs2fabric/src/client/java/dev/cs2fabric/client/Cs2FabricClient.java
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Compile and remap
+        working-directory: /tmp/cs2src/cs2fabric
+        run: gradle --no-daemon clean build --stacktrace
+
+      - name: Audit production JAR structure and new systems
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: python
+        run: |
+          import json, pathlib, re, zipfile, sys
+          jar = pathlib.Path("build/libs/cs2-fabric-0.4.0.jar")
+          if not jar.exists():
+              raise SystemExit("Production JAR missing")
+          with zipfile.ZipFile(jar) as z:
+              names = set(z.namelist())
+              cfg = json.loads(z.read("cs2fabric.client.mixins.json"))
+              pkg = cfg["package"].replace(".", "/")
+              missing = []
+              for group in ("mixins", "client", "server"):
+                  for cls in cfg.get(group, []):
+                      entry = f"{pkg}/{cls.replace('.', '/')}.class"
+                      if entry not in names:
+                          missing.append(entry)
+              if missing:
+                  print("Missing declared mixins:", *missing, sep="\n")
+                  raise SystemExit(1)
+
+              required = [
+                  "dev/cs2fabric/GunServerLogic.class",
+                  "dev/cs2fabric/GunSpec.class",
+                  "dev/cs2fabric/ModItems.class",
+                  "dev/cs2fabric/ModSounds.class",
+                  "dev/cs2fabric/client/Cs2FabricClient.class",
+                  "dev/cs2fabric/mixin/MinecraftInputMixin.class",
+              ]
+              for entry in required:
+                  if entry not in names:
+                      raise SystemExit(f"Missing class: {entry}")
+
+          src = pathlib.Path("src/main/java/dev/cs2fabric/ModItems.java").read_text()
+          gun_count = len(re.findall(r'new GunSpec\(', src))
+          assert gun_count == 34, gun_count
+
+          server = pathlib.Path("src/main/java/dev/cs2fabric/GunServerLogic.java").read_text()
+          client = pathlib.Path("src/client/java/dev/cs2fabric/client/Cs2FabricClient.java").read_text()
+          checks = {
+              "physical ammo consumption": "consumeAmmoMagazine" in server,
+              "empty-click reload": "requestReload(player)" in server and "used >= spec.magazineSize()" in client,
+              "visible tracer": "renderTracer" in server,
+              "hitgroup damage": "damageForHitgroup" in server,
+              "crosshair-hitbox guarantee": "crosshairOnHitbox" in server,
+              "server cooldown": "LAST_SHOT_NANOS" in server,
+              "client cooldown": "NEXT_SHOT_NANOS" in client,
+              "double-volume mixer path": "playDouble" in server,
+          }
+          for name, ok in checks.items():
+              print(name, "OK" if ok else "FAIL")
+              assert ok
+
+      - name: Install XVFB
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
+
+      - name: Production launch with Sodium 0.8.14
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM 90s gradle --no-daemon prodClient --stacktrace > /tmp/prodclient-console.log 2>&1
+          code=$?
+          set -e
+
+          if [ -f run-prod/logs/latest.log ]; then
+            cat run-prod/logs/latest.log
+          fi
+          cat /tmp/prodclient-console.log
+
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+            echo "Production client exited unexpectedly: $code"
+            exit "$code"
+          fi
+
+          logs="/tmp/prodclient-console.log"
+          if [ -f run-prod/logs/latest.log ]; then logs="$logs run-prod/logs/latest.log"; fi
+
+          if grep -Eqi 'InvalidMixinException|MixinApplyError|MixinTransformerError|ClassNotFoundException.*cs2fabric|Could not execute entrypoint|Exception in thread "main"|Crash report saved' $logs; then
+            echo "Detected production startup failure"
+            exit 1
+          fi
+          if ! grep -Eqi 'sodium 0\.8\.14|Sodium' $logs; then
+            echo "Sodium was not observed during production launch"
+            exit 1
+          fi
+          echo "Production launch survived with Sodium and no cs2fabric startup/mixin crash."
+
+      - name: Upload remapped code JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: cs2-fabric-v0.4.0-code
+          path: /tmp/cs2src/cs2fabric/build/libs/cs2-fabric-0.4.0.jar
+          if-no-files-found: error
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cs2-fabric-v0.4.0-launch-logs
+          path: |
+            /tmp/prodclient-console.log
+            /tmp/cs2src/cs2fabric/run-prod/logs/latest.log
+          if-no-files-found: ignore
