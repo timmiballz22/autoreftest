@@ -65,7 +65,7 @@ jobs:
           grep -q 'if (laserFiring)' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
           grep -q 'G2_LASER_Y = 0.92F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
           grep -q 'isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/SkibidiSoundController.java
-          grep -q 'if (!entity.isLaserFiring())' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
+          grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
           test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
 
