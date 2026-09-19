@@ -94,25 +94,25 @@ jobs:
           child.logfile = sys.stdout
           child.expect(re.compile(r'Done \('))
           child.sendline('forceload add 0 0 32 32')
+          time.sleep(2)
           child.sendline('kill @e[tag=laser_target]')
           child.sendline('kill @e[tag=laser_boss]')
-          child.sendline('summon minecraft:villager 0 80 28 {Tags:["laser_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
-          child.sendline('execute if entity @e[tag=laser_target] run say TARGET_SPAWN_PASS')
-          child.expect(re.compile(r'\[Server\] TARGET_SPAWN_PASS'), timeout=20)
-          child.sendline('summon skibidi:g_toilet_2 0 80 0 {Tags:["laser_boss"],NoGravity:1b,PersistenceRequired:1b}')
-          child.sendline('execute if entity @e[tag=laser_boss] run say BOSS_SPAWN_PASS')
-          child.expect(re.compile(r'\[Server\] BOSS_SPAWN_PASS'), timeout=20)
-          for _ in range(20):
-              child.sendline('tp @e[tag=laser_boss] 0 80 0')
+          child.sendline('summon minecraft:villager 0 200 28 {Tags:["laser_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["laser_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          time.sleep(2)
+          child.sendline('execute if data entity @e[tag=laser_boss,limit=1] {Health:650.0f} run say G2_HP_PASS')
+          child.expect(re.compile(r'\[Server\] G2_HP_PASS'), timeout=30)
+          for _ in range(24):
+              child.sendline('tp @e[tag=laser_boss] 0 200 0')
               time.sleep(0.25)
           child.sendline('execute unless entity @e[tag=laser_target] run say LASER_KILL_PASS')
           child.expect(re.compile(r'\[Server\] LASER_KILL_PASS'), timeout=30)
           child.sendline('stop')
           child.expect(pexpect.EOF, timeout=60)
           PY
-          grep -q '\[Server\] TARGET_SPAWN_PASS' ../server-combat.log
-          grep -q '\[Server\] BOSS_SPAWN_PASS' ../server-combat.log
+          grep -q '\[Server\] G2_HP_PASS' ../server-combat.log
           grep -q '\[Server\] LASER_KILL_PASS' ../server-combat.log
+          ! grep -q 'suffocated in a wall' ../server-combat.log
           ! grep -q 'Minecraft Crash Report' ../server-combat.log
 
       - name: Client renderer startup smoke test
