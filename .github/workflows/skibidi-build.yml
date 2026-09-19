@@ -39,11 +39,8 @@ jobs:
           cp -a v23-final/. skibidi-gh-build-min/
       - name: Overlay any-light spawn patch
         run: |
-          base64 -d skibidi-v231-patch.b64 > v231-patch.tar.gz
-          sha256sum v231-patch.tar.gz
-          tar -tzf v231-patch.tar.gz
-          tar -xzf v231-patch.tar.gz
-          cp -a skibidi-v231-patch/. skibidi-gh-build-min/
+          cp v231/ModEntityTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          cp v231/gradle.properties skibidi-gh-build-min/gradle.properties
       - name: Verify spawn rule source
         working-directory: skibidi-gh-build-min
         run: |
