@@ -47,18 +47,13 @@ jobs:
           cp v232/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p=Path('skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java')
           s=p.read_text()
-          old='''        if (variant.hasGlowingEyes()) {
-              box(pose, buffer, light, overlay, scale, headYaw, headPitch, true,
-                  -0.16F, 1.69F, -0.345F, 0.13F, 0.10F, 0.055F);
-              box(pose, buffer, light, overlay, scale, headYaw, headPitch, true,
-                   0.16F, 1.69F, -0.345F, 0.13F, 0.10F, 0.055F);
-          }
-
-          '''
-          assert old in s
-          p.write_text(s.replace(old,''))
+          pattern=r'\n\s*if \(variant\.hasGlowingEyes\(\)\) \{.*?\n\s*\}\n\n(?=\s*if \(variant == SkibidiVariant\.G_TOILET\))'
+          s2,n=re.subn(pattern,'\n\n',s,count=1,flags=re.S)
+          assert n==1, 'fake eye geometry block not found'
+          p.write_text(s2)
           PY
 
       - name: Rebuild runtime mesh directly from original uploaded glTF
