@@ -25,17 +25,17 @@ jobs:
       - name: Overlay v2 source rewrite
         run: |
           base64 -d skibidi-v2-patch.b64 > v2-patch.tar.gz
-          echo "ead44b50788482a3ea9b00c8ef54de0df84a1fdde49426f551f01232ebb24035  v2-patch.tar.gz" | sha256sum -c -
+          echo "4f2d756142c928ade8fc28a0ccaade82fb7aa5efb9364f292fe6a584fcff36dd  v2-patch.tar.gz" | sha256sum -c -
           tar -xzf v2-patch.tar.gz
           cp -a skibidi-v2-patch/. skibidi-gh-build-min/
           rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
-          rm -f skibidi-gh-build-min/src/main/resources/assets/skibidi/mesh/skibidi.skbm
           rm -f skibidi-gh-build-min/src/main/resources/data/minecraft/tags/entity_type/zombies.json
       - name: Generate corrected model assets
         working-directory: skibidi-gh-build-min
         run: |
           python3 -m pip install --disable-pip-version-check pillow
           python3 tools/generate_assets_v2.py
+          rm -f src/main/resources/assets/skibidi/mesh/skibidi.skbm
       - name: Offline validation
         working-directory: skibidi-gh-build-min
         run: python3 tools/validate_project.py
