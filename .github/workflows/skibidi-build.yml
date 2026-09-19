@@ -52,7 +52,22 @@ jobs:
 
       - name: Static regression checks
         working-directory: skibidi-gh-build-min
-        run: python3 tests/verify_v23.py
+        run: |
+          grep -q 'mod_version=2.3.0' gradle.properties
+          grep -q 'implements RangedAttackMob' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q 'target.hurtServer' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q 'hasLineOfSight' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q 'ServerBossEvent' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q '450.0D, 24.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q '650.0D, 28.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q '900.0D, 34.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'state.laserFiring' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          grep -q 'if (laserFiring)' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          grep -q 'G2_LASER_Y = 0.92F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          grep -q 'isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/SkibidiSoundController.java
+          grep -q 'if (!entity.isLaserFiring())' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
+          test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
+          test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
 
       - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
