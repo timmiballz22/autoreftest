@@ -1,0 +1,63 @@
+name: Build CS2 Fabric Animated V3
+
+on:
+  push:
+    branches: [chatgpt-cs2fabric-v3b]
+    paths:
+      - 'chatgpt-cs2fabric-v3b/**'
+      - '.github/workflows/chatgpt-cs2fabric-v3b.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified baseline
+        shell: bash
+        run: |
+          {
+            cat chatgpt-cs2fabric/part01.b64
+            cat chatgpt-cs2fabric/part02.b64
+            cat chatgpt-cs2fabric/fix03/*.b64
+            cat chatgpt-cs2fabric/part04.b64
+            cat chatgpt-cs2fabric/part05.b64
+            cat chatgpt-cs2fabric/fix06/*.b64
+          } | tr -d '\n\r' | base64 -d > /tmp/cs2baseline.zip
+          echo "4ef90835de217c9eef9918473482f55f2b28dc1e5d45800420fcbf5b963d6ba3  /tmp/cs2baseline.zip" | sha256sum -c -
+          mkdir -p /tmp/cs2src
+          unzip -q /tmp/cs2baseline.zip -d /tmp/cs2src
+
+      - name: Apply animated Java overlay
+        shell: bash
+        run: |
+          cat chatgpt-cs2fabric-v3b/code/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/code-overlay.zip
+          echo "6385b906d24ef1afa59d4285ca12310430244f8f6eeb009782d688f9ee26fd55  /tmp/code-overlay.zip" | sha256sum -c -
+          unzip -qo /tmp/code-overlay.zip -d /tmp/cs2src/cs2fabric
+          find /tmp/cs2src/cs2fabric/src -name '*.java' | sort
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Compile and remap
+        working-directory: /tmp/cs2src/cs2fabric
+        run: gradle --no-daemon clean build --stacktrace
+
+      - name: Inspect classes
+        working-directory: /tmp/cs2src/cs2fabric
+        run: |
+          ls -lah build/libs
+          jar tf build/libs/cs2-fabric-0.1.0.jar | grep -E 'GunAnimationState|GunRenderTransforms|ItemInHandRendererMixin|HumanoidModelMixin|ModSounds' || exit 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cs2-fabric-v3-compiled
+          path: /tmp/cs2src/cs2fabric/build/libs/cs2-fabric-0.1.0.jar
+          if-no-files-found: error
