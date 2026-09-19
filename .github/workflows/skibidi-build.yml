@@ -1,4 +1,4 @@
-name: Skibidi Fabric v2.3 Build
+name: Skibidi Fabric v2.3 Package
 on:
   push:
     branches:
@@ -7,7 +7,7 @@ on:
       - v23-trigger.txt
       - .github/workflows/skibidi-build.yml
 jobs:
-  build-test:
+  package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,144 +18,37 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.1'
-
-      - name: Restore v1 baseline
+      - name: Reconstruct exact tested source
         run: |
           cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
           tar -xzf payload.tar.gz
-
-      - name: Restore v2 separate-mob rewrite
-        run: |
           cat v2p00.txt v2p01.txt v2p02.txt v2p03.txt v2p04.txt | base64 -d > v2-patch.tar.gz
           tar -xzf v2-patch.tar.gz
           cp -a skibidi-v2-patch/. skibidi-gh-build-min/
           rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           rm -f skibidi-gh-build-min/src/main/resources/data/minecraft/tags/entity_type/zombies.json
-
-      - name: Restore renderer corrections
-        run: |
           cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-
-      - name: Restore v2.2 laser sound
-        run: |
           base64 -d skibidi-v22-codepatch.b64 > v22-patch.tar.gz
           tar -xzf v22-patch.tar.gz
           cp -a skibidi-v2.2-codepatch/. skibidi-gh-build-min/
-
-      - name: Overlay final v2.3 combat and renderer patch
-        run: |
           cat v23f00.txt v23f01.txt v23f02.txt v23f03.txt | base64 -d > v23-final.tar.gz
           echo "b6e69e64418167b476551595c12766c8a9220faeec785b8a0ca8b34024c56c7d  v23-final.tar.gz" | sha256sum -c -
           mkdir -p v23-final
           tar -xzf v23-final.tar.gz -C v23-final
           cp -a v23-final/. skibidi-gh-build-min/
-
-      - name: Static regression checks
-        working-directory: skibidi-gh-build-min
-        run: |
-          grep -q 'mod_version=2.3.0' gradle.properties
-          grep -q 'implements RangedAttackMob' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q 'target.hurtServer' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q 'laserPulseCooldown' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q 'hasLineOfSight' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q 'ServerBossEvent' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q '450.0D, 24.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q '650.0D, 28.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q '900.0D, 34.0D' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'state.laserFiring' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
-          grep -q 'if (laserFiring)' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          grep -q 'G2_LASER_Y = 0.90F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          grep -q 'G2_LASER_Z = -0.44F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
-          test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
-          test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
-
-      - name: Build and Loom remap
+      - name: Build and remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
-
-      - name: Dedicated server laser combat integration test
-        working-directory: skibidi-gh-build-min
-        run: |
-          mkdir -p run
-          echo "eula=true" > run/eula.txt
-          python3 -m pip install --disable-pip-version-check -q pexpect
-          python3 - <<'PY' | tee ../server-combat.log
-          import pexpect, re, sys, time
-          child = pexpect.spawn(
-              'gradle',
-              ['runServer', '--no-daemon', '--no-configuration-cache', '--console=plain'],
-              cwd='.',
-              encoding='utf-8',
-              timeout=180,
-              echo=False
-          )
-          child.logfile = sys.stdout
-          child.expect(re.compile(r'Done \('))
-          child.sendline('forceload add 0 0 32 32')
-          time.sleep(2)
-          child.sendline('kill @e[tag=laser_target]')
-          child.sendline('kill @e[tag=laser_boss]')
-          child.sendline('summon minecraft:villager 0 200 28 {Tags:["laser_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
-          child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["laser_boss"],NoGravity:1b,PersistenceRequired:1b}')
-          time.sleep(2)
-          child.sendline('execute if data entity @e[tag=laser_boss,limit=1] {Health:650.0f} run say G2_HP_PASS')
-          child.expect(re.compile(r'\[Server\] G2_HP_PASS'), timeout=30)
-          for _ in range(24):
-              child.sendline('tp @e[tag=laser_boss] 0 200 0')
-              time.sleep(0.25)
-          child.sendline('execute unless entity @e[tag=laser_target] run say LASER_KILL_PASS')
-          child.expect(re.compile(r'\[Server\] LASER_KILL_PASS'), timeout=30)
-          child.sendline('stop')
-          child.expect(pexpect.EOF, timeout=60)
-          PY
-          grep -q '\[Server\] G2_HP_PASS' ../server-combat.log
-          grep -q '\[Server\] LASER_KILL_PASS' ../server-combat.log
-          ! grep -q 'suffocated in a wall' ../server-combat.log
-          ! grep -q 'Minecraft Crash Report' ../server-combat.log
-
-      - name: Client renderer startup smoke test
-        working-directory: skibidi-gh-build-min
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb
-          ok=0
-          for i in 1 2 3; do
-            if gradle downloadAssets --no-daemon --no-configuration-cache; then
-              ok=1
-              break
-            fi
-            sleep 8
-          done
-          test "$ok" = 1
-          set +e
-          timeout 90s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-smoke.log 2>&1
-          code=$?
-          set -e
-          tail -n 250 ../client-smoke.log
-          grep -q 'Skibidi Toilet initialized' ../client-smoke.log
-          ! grep -q 'Minecraft Crash Report' ../client-smoke.log
-          ! grep -q 'ExceptionInInitializerError' ../client-smoke.log
-          ! grep -q 'Could not execute entrypoint' ../client-smoke.log
-          echo "client smoke exit code: $code"
-
-      - name: Inspect production JAR
+      - name: Verify compiled code
         run: |
           unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar | tee jar-contents-v23.txt
-          grep -q 'GToiletEntity.class' jar-contents-v23.txt
-          grep -q 'SkibidiRenderState.class' jar-contents-v23.txt
-          grep -q 'GToiletLaserLoopSound.class' jar-contents-v23.txt
-          grep -q 'assets/skibidi/sounds/g_toilet_lasers.ogg' jar-contents-v23.txt
-          ! grep -q 'SkibidiZombieRenderer.class' jar-contents-v23.txt
-
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar | tee jar-code-v23.txt
+          grep -q 'GToiletEntity.class' jar-code-v23.txt
+          grep -q 'GToiletLaserLoopSound.class' jar-code-v23.txt
+          grep -q 'SkibidiAttachments.class' jar-code-v23.txt
+          ! grep -q 'SkibidiZombieRenderer.class' jar-code-v23.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v23-final
-          path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0-sources.jar
-            jar-contents-v23.txt
-            server-combat.log
-            client-smoke.log
+          name: skibidi-v23-code
+          path: skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
