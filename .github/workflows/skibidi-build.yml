@@ -1,10 +1,10 @@
-name: Skibidi Fabric v2.4 Build
+name: Skibidi Fabric v2.3.2 Model Fix
 on:
   push:
     branches:
       - chatgpt-skibidi-build-20260919
     paths:
-      - v240-trigger.txt
+      - v232-trigger.txt
       - .github/workflows/skibidi-build.yml
 jobs:
   build-test:
@@ -19,7 +19,7 @@ jobs:
         with:
           gradle-version: '9.5.1'
 
-      - name: Reconstruct v2.3 baseline
+      - name: Reconstruct exact delivered v2.3.1 source
         run: |
           cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
           tar -xzf payload.tar.gz
@@ -38,137 +38,213 @@ jobs:
           mkdir -p v23-final
           tar -xzf v23-final.tar.gz -C v23-final
           cp -a v23-final/. skibidi-gh-build-min/
+          cp v231/ModEntityTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          cp v231/gradle.properties skibidi-gh-build-min/gradle.properties
+          sed -i 's/mod_version=2.3.1/mod_version=2.3.2/' skibidi-gh-build-min/gradle.properties
 
-      - name: Overlay v2.4 combat and spawn patch
+      - name: Apply material-correct renderer
         run: |
-          base64 -d skibidi-v240-patch.b64 > v240-patch.tar.gz
-          echo "06fb975517be0be8f0a7ce5a73b5a7d7b33dc3dc33897e11d6c47cc8236d4f5d  v240-patch.tar.gz" | sha256sum -c -
-          tar -xzf v240-patch.tar.gz -C skibidi-gh-build-min
-          cp v240/ModDamageTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModDamageTypes.java
+          cp v232/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java')
+          s=p.read_text()
+          old='''        if (variant.hasGlowingEyes()) {
+              box(pose, buffer, light, overlay, scale, headYaw, headPitch, true,
+                  -0.16F, 1.69F, -0.345F, 0.13F, 0.10F, 0.055F);
+              box(pose, buffer, light, overlay, scale, headYaw, headPitch, true,
+                   0.16F, 1.69F, -0.345F, 0.13F, 0.10F, 0.055F);
+          }
 
-      - name: Static regression checks
-        working-directory: skibidi-gh-build-min
+          '''
+          assert old in s
+          p.write_text(s.replace(old,''))
+          PY
+
+      - name: Rebuild runtime mesh directly from original uploaded glTF
         run: |
-          grep -q 'mod_version=2.4.0' gradle.properties
-          test -f src/main/resources/data/skibidi/damage_type/g_toilet_laser.json
-          grep -q 'skibidi:g_toilet_laser' src/main/resources/data/minecraft/tags/damage_type/no_knockback.json
-          grep -q 'Mob::checkMobSpawnRules' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'addOverworldSpawn(SKIBIDI, 100' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'addOverworldSpawn(SKIBIDI_KING, 8' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'addOverworldSpawn(G_TOILET, 4' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'addOverworldSpawn(G_TOILET_2, 2' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          grep -q 'addOverworldSpawn(G_TOILET_3, 1' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          ! grep -q 'RangedAttackGoal' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          ! grep -q 'implements RangedAttackMob' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q 'LASER_WARNING' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q 'previousVelocity' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
-          grep -q 'prismBetween' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          grep -q 'laserWarning' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
-          grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
-          test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
-          test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
+          test -f skibidi-gh-build-min/source-assets/skibidi-toilet-minecraft-model.zip
+          rm -rf original-model
+          mkdir original-model
+          unzip -q skibidi-gh-build-min/source-assets/skibidi-toilet-minecraft-model.zip -d original-model
+          mkdir -p skibidi-gh-build-min/src/main/resources/assets/skibidi/mesh
+          mkdir -p skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity
+          cp original-model/textures/gltf_embedded_0.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_head.png
+          cp original-model/textures/gltf_embedded_1.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_interior.png
+          cp original-model/textures/gltf_embedded_2.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_toilet.png
+          python3 - <<'PY'
+          import json, base64, struct
+          from pathlib import Path
+
+          gltf_path=Path('original-model/source/model.gltf')
+          out=Path('skibidi-gh-build-min/src/main/resources/assets/skibidi/mesh/skibidi_v2.skbm')
+          g=json.loads(gltf_path.read_text())
+          uri=g['buffers'][0]['uri']
+          assert uri.startswith('data:application/octet-stream;base64,')
+          buf=base64.b64decode(uri.split(',',1)[1])
+          comp_fmt={5120:'b',5121:'B',5122:'h',5123:'H',5125:'I',5126:'f'}
+          comp_count={'SCALAR':1,'VEC2':2,'VEC3':3,'VEC4':4,'MAT2':4,'MAT3':9,'MAT4':16}
+
+          def accessor(idx):
+              a=g['accessors'][idx]
+              assert not a.get('sparse')
+              view=g['bufferViews'][a['bufferView']]
+              code=comp_fmt[a['componentType']]
+              n=comp_count[a['type']]
+              scalar_size=struct.calcsize('<'+code)
+              stride=view.get('byteStride', n*scalar_size)
+              offset=view.get('byteOffset',0)+a.get('byteOffset',0)
+              result=[]
+              for i in range(a['count']):
+                  values=struct.unpack_from('<'+code*n,buf,offset+i*stride)
+                  result.append(values[0] if n==1 else tuple(float(v) for v in values))
+              return result
+
+          groups={
+              0:{'material':0,'verts':[]},
+              1:{'material':0,'verts':[]},
+              2:{'material':0,'verts':[]},
+              3:{'material':1,'verts':[]},
+              4:{'material':2,'verts':[]},
+          }
+          def group_for(name):
+              if name in {'ojo_D','ojo_I'}: return 1
+              if name in {'pupila_D','pupila_I'}: return 2
+              if name=='interior': return 3
+              if name=='Escusado': return 4
+              return 0
+
+          for node in g['nodes']:
+              if 'mesh' not in node:
+                  continue
+              gid=group_for(node.get('name',''))
+              for prim in g['meshes'][node['mesh']]['primitives']:
+                  assert prim.get('mode',4)==4
+                  assert prim.get('material',0)==groups[gid]['material']
+                  pos=accessor(prim['attributes']['POSITION'])
+                  nor=accessor(prim['attributes']['NORMAL'])
+                  uv=accessor(prim['attributes']['TEXCOORD_0'])
+                  indices=accessor(prim['indices'])
+                  for raw_i in indices:
+                      i=int(raw_i)
+                      x,y,z=pos[i]; nx,ny,nz=nor[i]; u,v=uv[i]
+                      groups[gid]['verts'].append((x,y,z,u,v,nx,ny,nz))
+
+          assert [len(groups[i]['verts']) for i in range(5)] == [3282,72,72,18,720]
+          with out.open('wb') as f:
+              f.write(b'SKB2')
+              f.write(struct.pack('<ii',2,5))
+              for gid in range(5):
+                  part=groups[gid]
+                  f.write(struct.pack('<iii',gid,part['material'],len(part['verts'])))
+                  for vert in part['verts']:
+                      f.write(struct.pack('<8f',*vert))
+          PY
+
+      - name: Validate exact model reconstruction
+        run: |
+          cmp original-model/textures/gltf_embedded_0.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_head.png
+          cmp original-model/textures/gltf_embedded_1.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_interior.png
+          cmp original-model/textures/gltf_embedded_2.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_toilet.png
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          p=Path('skibidi-gh-build-min/src/main/resources/assets/skibidi/mesh/skibidi_v2.skbm')
+          b=p.read_bytes()
+          assert b[:4]==b'SKB2'
+          off=4
+          version,count=struct.unpack_from('<ii',b,off); off+=8
+          assert (version,count)==(2,5)
+          expected=[(0,0,3282),(1,0,72),(2,0,72),(3,1,18),(4,2,720)]
+          got=[]
+          for _ in range(count):
+              gid,mat,n=struct.unpack_from('<iii',b,off); off+=12
+              got.append((gid,mat,n))
+              off += n*8*4
+          assert got==expected, got
+          assert off==len(b)
+          print('MODEL_ASSET_VALIDATION_PASS',got)
+          PY
+          grep -q 'HEAD_TEXTURE' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          grep -q 'INTERIOR_TEXTURE' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          grep -q 'TOILET_TEXTURE' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          ! grep -q -- '-0.16F, 1.69F, -0.345F, 0.13F' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
 
       - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
 
-      - name: Dedicated server combat test
+      - name: Dedicated server combat regression
         working-directory: skibidi-gh-build-min
         run: |
           mkdir -p run
           echo "eula=true" > run/eula.txt
           python3 -m pip install --disable-pip-version-check -q pexpect
-          python3 - <<'PY' | tee ../server-v240.log
+          python3 - <<'PY' | tee ../server-v232.log
           import pexpect, re, sys, time
-
-          child=pexpect.spawn(
-              'gradle',
-              ['runServer','--no-daemon','--no-configuration-cache','--console=plain'],
-              cwd='.', encoding='utf-8', timeout=240, echo=False
-          )
+          child=pexpect.spawn('gradle',['runServer','--no-daemon','--no-configuration-cache','--console=plain'],cwd='.',encoding='utf-8',timeout=220,echo=False)
           child.logfile=sys.stdout
           child.expect(re.compile(r'Done \('))
           child.sendline('forceload add 0 0 32 32')
-          child.sendline('scoreboard objectives add sktest dummy')
-          time.sleep(1.0)
-
-          # Clean slate: type selectors are reliable on 1.21.11 even when NBT Tags are delayed.
           child.sendline('kill @e[type=minecraft:villager]')
           child.sendline('kill @e[type=skibidi:g_toilet_2]')
-          time.sleep(0.5)
-
-          # Long-range angled target proves the laser aims at a non-axis-aligned location.
-          child.sendline('summon minecraft:villager 8 200 24 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
-          child.expect(re.compile(r'Summoned new Villager'), timeout=30)
-          time.sleep(1.0)
-          child.sendline('attribute @e[type=minecraft:villager,limit=1] minecraft:max_health base set 500')
-          child.expect(re.compile(r'base value.*500\.0'), timeout=30)
-          child.sendline('data merge entity @e[type=minecraft:villager,limit=1] {Health:500.0f}')
-          time.sleep(0.5)
-
+          time.sleep(1)
+          child.sendline('summon minecraft:villager 0 200 28 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.expect(re.compile(r'Summoned new Villager'),timeout=30)
           child.sendline('summon skibidi:g_toilet_2 0 200 0 {NoGravity:1b,PersistenceRequired:1b}')
-          child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
-          time.sleep(1.0)
+          child.expect(re.compile(r'Summoned new G-Toilet 2\.0'),timeout=30)
           child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
-          child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
-
-          # Cooldown + tracking warning + firing window.
-          time.sleep(5.5)
-          child.sendline('execute store result score #hp sktest run data get entity @e[type=minecraft:villager,limit=1] Health 10')
-          time.sleep(0.2)
-          child.sendline('execute if score #hp sktest matches 1..4999 run say LASER_DAMAGE_PASS')
-          child.expect(re.compile(r'\[Server\] LASER_DAMAGE_PASS'), timeout=30)
-
-          # Laser damage must not impart velocity.
-          child.sendline('execute store result score #mx sktest run data get entity @e[type=minecraft:villager,limit=1] Motion[0] 100000')
-          child.sendline('execute store result score #my sktest run data get entity @e[type=minecraft:villager,limit=1] Motion[1] 100000')
-          child.sendline('execute store result score #mz sktest run data get entity @e[type=minecraft:villager,limit=1] Motion[2] 100000')
-          time.sleep(0.3)
-          child.sendline('execute if score #mx sktest matches 0 if score #my sktest matches 0 if score #mz sktest matches 0 run say LASER_NO_KNOCKBACK_PASS')
-          child.expect(re.compile(r'\[Server\] LASER_NO_KNOCKBACK_PASS'), timeout=30)
-
-          # Clean slate again.
-          child.sendline('kill @e[type=minecraft:villager]')
-          child.sendline('kill @e[type=skibidi:g_toilet_2]')
-          time.sleep(0.7)
-
-          # Inside 3 blocks, laser startup is disabled; inherited zombie melee must still kill.
-          child.sendline('summon minecraft:villager 0 200 1 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
-          child.expect(re.compile(r'Summoned new Villager'), timeout=30)
-          time.sleep(1.0)
-          child.sendline('summon skibidi:g_toilet_2 0 200 0 {NoGravity:1b,PersistenceRequired:1b}')
-          child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
-          time.sleep(1.0)
-          child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
-          child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
-          time.sleep(10.0)
-          child.sendline('execute unless entity @e[type=minecraft:villager,limit=1] run say MELEE_STILL_WORKS_PASS')
-          child.expect(re.compile(r'\[Server\] MELEE_STILL_WORKS_PASS'), timeout=30)
-
+          time.sleep(10)
+          child.sendline('execute unless entity @e[type=minecraft:villager,limit=1] run say LASER_REGRESSION_PASS')
+          child.expect(re.compile(r'\[Server\] LASER_REGRESSION_PASS'),timeout=30)
           child.sendline('stop')
-          child.expect(pexpect.EOF, timeout=90)
+          child.expect(pexpect.EOF,timeout=60)
           PY
-          grep -q '\[Server\] LASER_DAMAGE_PASS' ../server-v240.log
-          grep -q '\[Server\] LASER_NO_KNOCKBACK_PASS' ../server-v240.log
-          grep -q '\[Server\] MELEE_STILL_WORKS_PASS' ../server-v240.log
-          ! grep -q 'Minecraft Crash Report' ../server-v240.log
+          grep -q '\[Server\] LASER_REGRESSION_PASS' ../server-v232.log
+          ! grep -q 'Minecraft Crash Report' ../server-v232.log
 
-      - name: Inspect production JAR
+      - name: Client startup smoke test
+        working-directory: skibidi-gh-build-min
         run: |
-          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
-          unzip -p skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar fabric.mod.json | grep -q '"version": "2.4.0"'
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar | tee jar-v240.txt
-          grep -q 'ModDamageTypes.class' jar-v240.txt
-          grep -q 'GToiletEntity.class' jar-v240.txt
-          grep -q 'SkibidiAttachments.class' jar-v240.txt
-          grep -q 'data/skibidi/damage_type/g_toilet_laser.json' jar-v240.txt
-          grep -q 'data/minecraft/tags/damage_type/no_knockback.json' jar-v240.txt
-          ! grep -q 'SkibidiZombieRenderer.class' jar-v240.txt
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
+          ok=0
+          for i in 1 2 3; do
+            if gradle downloadAssets --no-daemon --no-configuration-cache; then ok=1; break; fi
+            sleep 8
+          done
+          test "$ok" = 1
+          set +e
+          timeout 90s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-v232.log 2>&1
+          code=$?
+          set -e
+          tail -n 200 ../client-v232.log
+          grep -q 'Skibidi Toilet initialized' ../client-v232.log
+          ! grep -q 'Minecraft Crash Report' ../client-v232.log
+          ! grep -q 'ExceptionInInitializerError' ../client-v232.log
+          ! grep -q 'Could not execute entrypoint' ../client-v232.log
+          echo "client smoke exit code: $code"
+
+      - name: Inspect production JAR resources
+        run: |
+          JAR=skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.2.jar
+          unzip -t "$JAR"
+          unzip -p "$JAR" fabric.mod.json | grep -q '"version": "2.3.2"'
+          unzip -l "$JAR" | tee jar-v232.txt
+          grep -q 'assets/skibidi/mesh/skibidi_v2.skbm' jar-v232.txt
+          grep -q 'assets/skibidi/textures/entity/skibidi_head.png' jar-v232.txt
+          grep -q 'assets/skibidi/textures/entity/skibidi_interior.png' jar-v232.txt
+          grep -q 'assets/skibidi/textures/entity/skibidi_toilet.png' jar-v232.txt
+          grep -q 'assets/skibidi/sounds/g_toilet_lasers.ogg' jar-v232.txt
+          grep -q 'GToiletEntity.class' jar-v232.txt
+          grep -q 'SkibidiMeshLayer.class' jar-v232.txt
+          ! grep -q 'SkibidiZombieRenderer.class' jar-v232.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v240-code
+          name: skibidi-v232-final
           path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
-            server-v240.log
-            jar-v240.txt
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.2.jar
+            server-v232.log
+            client-v232.log
+            jar-v232.txt
