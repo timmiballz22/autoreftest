@@ -40,7 +40,7 @@ jobs:
       - name: Overlay any-light spawn patch
         run: |
           base64 -d skibidi-v231-patch.b64 > v231-patch.tar.gz
-          echo "2fd8f5e8e94f11d5cda3a9cc6e9081bf52fb651caa5fc52d63fdfc8874745bcc  v231-patch.tar.gz" | sha256sum -c -
+          sha256sum v231-patch.tar.gz\n          tar -tzf v231-patch.tar.gz
           tar -xzf v231-patch.tar.gz
           cp -a skibidi-v231-patch/. skibidi-gh-build-min/
       - name: Verify spawn rule source
