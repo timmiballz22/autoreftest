@@ -104,46 +104,57 @@ public final class SkibidiMesh {
         float ny,
         float nz
     ) {
-        if (rotateAroundHead && (yawDegrees != 0.0F || pitchDegrees != 0.0F)) {
-            float yaw = (float)Math.toRadians(yawDegrees);
-            float pitch = (float)Math.toRadians(pitchDegrees);
-            float sinYaw = (float)Math.sin(yaw);
-            float cosYaw = (float)Math.cos(yaw);
-            float sinPitch = (float)Math.sin(pitch);
-            float cosPitch = (float)Math.cos(pitch);
+        float yaw = (float)Math.toRadians(yawDegrees);
+        float pitch = (float)Math.toRadians(pitchDegrees);
+        float sinYaw = (float)Math.sin(yaw);
+        float cosYaw = (float)Math.cos(yaw);
+        float sinPitch = (float)Math.sin(pitch);
+        float cosPitch = (float)Math.cos(pitch);
 
+        if (rotateAroundHead) {
             x -= HEAD_PIVOT_X;
             y -= HEAD_PIVOT_Y;
             z -= HEAD_PIVOT_Z;
 
-            // Yaw in the model's Y-up coordinate system.
-            float yawX = x * cosYaw + z * sinYaw;
-            float yawZ = -x * sinYaw + z * cosYaw;
+            float rotatedX = x * cosYaw - z * sinYaw;
+            float rotatedZ = x * sinYaw + z * cosYaw;
+            float rotatedY = y * cosPitch - rotatedZ * sinPitch;
+            float rotatedZ2 = y * sinPitch + rotatedZ * cosPitch;
 
-            // Pitch around model-local X.
-            float pitchY = y * cosPitch - yawZ * sinPitch;
-            float pitchZ = y * sinPitch + yawZ * cosPitch;
+            x = rotatedX + HEAD_PIVOT_X;
+            y = rotatedY + HEAD_PIVOT_Y;
+            z = rotatedZ2 + HEAD_PIVOT_Z;
 
-            x = yawX + HEAD_PIVOT_X;
-            y = pitchY + HEAD_PIVOT_Y;
-            z = pitchZ + HEAD_PIVOT_Z;
+            float rotatedNx = nx * cosYaw - nz * sinYaw;
+            float rotatedNz = nx * sinYaw + nz * cosYaw;
+            float rotatedNy = ny * cosPitch - rotatedNz * sinPitch;
+            float rotatedNz2 = ny * sinPitch + rotatedNz * cosPitch;
 
-            float normalYawX = nx * cosYaw + nz * sinYaw;
-            float normalYawZ = -nx * sinYaw + nz * cosYaw;
-            float normalPitchY = ny * cosPitch - normalYawZ * sinPitch;
-            float normalPitchZ = ny * sinPitch + normalYawZ * cosPitch;
-
-            nx = normalYawX;
-            ny = normalPitchY;
-            nz = normalPitchZ;
+            nx = rotatedNx;
+            ny = rotatedNy;
+            nz = rotatedNz2;
         }
 
-        buffer.addVertex(pose, x * scale, y * scale, z * scale)
+        /*
+         * LivingEntityRenderer has already applied:
+         *   scale(-1,-1,+1)
+         *   translate(0,-1.501,0)
+         * before render layers are submitted. The uploaded glTF is ordinary
+         * Y-up block-space geometry, so these coordinates deliberately undo
+         * that vanilla ModelPart convention. This preserves all normal vanilla
+         * living-entity pose/rotation handling while the topology conversion
+         * below fixes the actual rendering corruption.
+         */
+        float modelX = -x * scale;
+        float modelY = 1.501F - y * scale;
+        float modelZ = z * scale;
+
+        buffer.addVertex(pose, modelX, modelY, modelZ)
             .setColor(0xFFFFFFFF)
             .setUv(u, v)
             .setOverlay(overlay)
             .setLight(light)
-            .setNormal(pose, nx, ny, nz);
+            .setNormal(pose, -nx, -ny, nz);
     }
 
     private static void renderVertices(
