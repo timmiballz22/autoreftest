@@ -62,6 +62,9 @@ jobs:
           assert face.count('vertex(pose,buffer') == 4, face.count('vertex(pose,buffer')
           print('ATTACHMENT_QUAD_TOPOLOGY_PASS')
           PY
+          grep -q 'this.addLayer(new SkibidiMeshLayer' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
+          grep -q 'float modelX = -x \* scale' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
+          grep -q 'float modelY = 1.501F - y \* scale' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
           grep -q 'state.laserFiring' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
           grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
           grep -q 'G2_LASER_Y = 0.90F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
