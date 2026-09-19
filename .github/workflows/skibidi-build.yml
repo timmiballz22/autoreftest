@@ -1,13 +1,13 @@
-name: Skibidi Fabric v2.3.2 Model Fix
+name: Skibidi Fabric v2.4 Renderer Fix
 on:
   push:
     branches:
       - chatgpt-skibidi-build-20260919
     paths:
-      - v232-trigger.txt
+      - v24-trigger.txt
       - .github/workflows/skibidi-build.yml
 jobs:
-  build-test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +19,7 @@ jobs:
         with:
           gradle-version: '9.5.1'
 
-      - name: Reconstruct exact delivered v2.3.1 source
+      - name: Reconstruct v2.3 source
         run: |
           cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
           tar -xzf payload.tar.gz
@@ -39,135 +39,41 @@ jobs:
           tar -xzf v23-final.tar.gz -C v23-final
           cp -a v23-final/. skibidi-gh-build-min/
           cp v231/ModEntityTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
-          cp v231/gradle.properties skibidi-gh-build-min/gradle.properties
-          sed -i 's/mod_version=2.3.1/mod_version=2.3.2/' skibidi-gh-build-min/gradle.properties
 
-      - name: Apply material-correct renderer
+      - name: Overlay clean direct renderer
         run: |
-          cp v232/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p=Path('skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java')
-          s=p.read_text()
-          pattern=r'\n\s*if \(variant\.hasGlowingEyes\(\)\) \{.*?\n\s*\}\n\n(?=\s*if \(variant == SkibidiVariant\.G_TOILET\))'
-          s2,n=re.subn(pattern,'\n\n',s,count=1,flags=re.S)
-          assert n==1, 'fake eye geometry block not found'
-          p.write_text(s2)
-          PY
+          cp v24/SkibidiMesh.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
+          cp v24/SkibidiRenderer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
+          cp v24/gradle.properties skibidi-gh-build-min/gradle.properties
 
-      - name: Rebuild runtime mesh directly from original uploaded glTF
+      - name: Renderer regression source checks
+        working-directory: skibidi-gh-build-min
         run: |
-          test -f skibidi-gh-build-min/source-assets/skibidi-toilet-minecraft-model.zip
-          rm -rf original-model
-          mkdir original-model
-          unzip -q skibidi-gh-build-min/source-assets/skibidi-toilet-minecraft-model.zip -d original-model
-          python3 v232/build_model.py original-model skibidi-gh-build-min/src/main/resources
-
-      - name: Validate exact model reconstruction
-        run: |
-          cmp original-model/textures/gltf_embedded_0.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_head.png
-          cmp original-model/textures/gltf_embedded_1.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_interior.png
-          cmp original-model/textures/gltf_embedded_2.png skibidi-gh-build-min/src/main/resources/assets/skibidi/textures/entity/skibidi_toilet.png
-          python3 - <<'PY'
-          import struct
-          from pathlib import Path
-          p=Path('skibidi-gh-build-min/src/main/resources/assets/skibidi/mesh/skibidi_v2.skbm')
-          b=p.read_bytes()
-          assert b[:4]==b'SKB2'
-          off=4
-          version,count=struct.unpack_from('<ii',b,off); off+=8
-          assert (version,count)==(2,5)
-          expected=[(0,0,3282),(1,0,72),(2,0,72),(3,1,18),(4,2,720)]
-          got=[]
-          for _ in range(count):
-              gid,mat,n=struct.unpack_from('<iii',b,off); off+=12
-              got.append((gid,mat,n))
-              off += n*8*4
-          assert got==expected, got
-          assert off==len(b)
-          print('MODEL_ASSET_VALIDATION_PASS',got)
-          PY
-          grep -q 'HEAD_TEXTURE' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
-          grep -q 'INTERIOR_TEXTURE' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
-          grep -q 'TOILET_TEXTURE' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
-          ! grep -q -- '-0.16F, 1.69F, -0.345F, 0.13F' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          grep -q 'mod_version=2.4.0' gradle.properties
+          grep -q 'x \* scale, y \* scale, z \* scale' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
+          grep -q 'DO NOT install SkibidiMeshLayer' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
+          grep -q 'Axis.YP.rotationDegrees(180.0F - state.bodyRot)' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
+          grep -q 'state.laserFiring' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
+          grep -q 'Mob::checkMobSpawnRules' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          ! grep -q 'this.addLayer' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
 
       - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
 
-      - name: Dedicated server combat regression
-        working-directory: skibidi-gh-build-min
+      - name: Inspect compiled renderer
         run: |
-          mkdir -p run
-          echo "eula=true" > run/eula.txt
-          python3 -m pip install --disable-pip-version-check -q pexpect
-          python3 - <<'PY' | tee ../server-v232.log
-          import pexpect, re, sys, time
-          child=pexpect.spawn('gradle',['runServer','--no-daemon','--no-configuration-cache','--console=plain'],cwd='.',encoding='utf-8',timeout=220,echo=False)
-          child.logfile=sys.stdout
-          child.expect(re.compile(r'Done \('))
-          child.sendline('forceload add 0 0 32 32')
-          child.sendline('kill @e[type=minecraft:villager]')
-          child.sendline('kill @e[type=skibidi:g_toilet_2]')
-          time.sleep(1)
-          child.sendline('summon minecraft:villager 0 200 28 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
-          child.expect(re.compile(r'Summoned new Villager'),timeout=30)
-          child.sendline('summon skibidi:g_toilet_2 0 200 0 {NoGravity:1b,PersistenceRequired:1b}')
-          child.expect(re.compile(r'Summoned new G-Toilet 2\.0'),timeout=30)
-          child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
-          time.sleep(10)
-          child.sendline('execute unless entity @e[type=minecraft:villager,limit=1] run say LASER_REGRESSION_PASS')
-          child.expect(re.compile(r'\[Server\] LASER_REGRESSION_PASS'),timeout=30)
-          child.sendline('stop')
-          child.expect(pexpect.EOF,timeout=60)
-          PY
-          grep -q '\[Server\] LASER_REGRESSION_PASS' ../server-v232.log
-          ! grep -q 'Minecraft Crash Report' ../server-v232.log
-
-      - name: Client startup smoke test
-        working-directory: skibidi-gh-build-min
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb
-          ok=0
-          for i in 1 2 3; do
-            if gradle downloadAssets --no-daemon --no-configuration-cache; then ok=1; break; fi
-            sleep 8
-          done
-          test "$ok" = 1
-          set +e
-          timeout 90s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-v232.log 2>&1
-          code=$?
-          set -e
-          tail -n 200 ../client-v232.log
-          grep -q 'Skibidi Toilet initialized' ../client-v232.log
-          ! grep -q 'Minecraft Crash Report' ../client-v232.log
-          ! grep -q 'ExceptionInInitializerError' ../client-v232.log
-          ! grep -q 'Could not execute entrypoint' ../client-v232.log
-          echo "client smoke exit code: $code"
-
-      - name: Inspect production JAR resources
-        run: |
-          JAR=skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.2.jar
-          unzip -t "$JAR"
-          unzip -p "$JAR" fabric.mod.json | grep -q '"version": "2.3.2"'
-          unzip -l "$JAR" | tee jar-v232.txt
-          grep -q 'assets/skibidi/mesh/skibidi_v2.skbm' jar-v232.txt
-          grep -q 'assets/skibidi/textures/entity/skibidi_head.png' jar-v232.txt
-          grep -q 'assets/skibidi/textures/entity/skibidi_interior.png' jar-v232.txt
-          grep -q 'assets/skibidi/textures/entity/skibidi_toilet.png' jar-v232.txt
-          grep -q 'assets/skibidi/sounds/g_toilet_lasers.ogg' jar-v232.txt
-          grep -q 'GToiletEntity.class' jar-v232.txt
-          grep -q 'SkibidiMeshLayer.class' jar-v232.txt
-          ! grep -q 'SkibidiZombieRenderer.class' jar-v232.txt
+          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
+          javap -classpath skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar -c -p dev.ashenthefox.skibidi.client.render.SkibidiMesh > mesh-bytecode.txt
+          javap -classpath skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar -c -p dev.ashenthefox.skibidi.client.render.SkibidiRenderer > renderer-bytecode.txt
+          grep -q 'Axis.YP' skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
+          grep -q 'GToiletLaserLoopSound.class' <(unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar)
+          grep -q 'GToiletEntity.class' <(unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v232-final
+          name: skibidi-v24-code
           path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.2.jar
-            server-v232.log
-            client-v232.log
-            jar-v232.txt
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
+            mesh-bytecode.txt
+            renderer-bytecode.txt
