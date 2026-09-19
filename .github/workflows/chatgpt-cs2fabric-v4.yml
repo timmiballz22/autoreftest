@@ -36,6 +36,20 @@ jobs:
           echo "2bceb372664c35c0391bd20d4db822efe4e2fedaf250fc355b164540840d9234  /tmp/v4-overlay.zip" | sha256sum -c -
           unzip -qo /tmp/v4-overlay.zip -d /tmp/cs2src/cs2fabric
 
+          # Final current-stat corrections.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("/tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/ModItems.java")
+          s = p.read_text()
+          s = s.replace('"glock_18", "Glock-18", 6.000F, 4.0F, 20, 120, 400,',
+                        '"glock_18", "Glock-18", 6.000F, 4.0F, 20, 60, 400,')
+          s = s.replace('"p2000", "P2000", 7.000F, 4.0F, 13, 52, 352,',
+                        '"p2000", "P2000", 7.000F, 4.0F, 13, 52, 353,')
+          s = s.replace('"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 352,',
+                        '"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 353,')
+          p.write_text(s)
+          PY
+
           # Add production runtime mods only for the launch test.
           cat >> /tmp/cs2src/cs2fabric/build.gradle <<'GRADLE'
 
