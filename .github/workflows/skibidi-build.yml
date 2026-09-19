@@ -1,13 +1,13 @@
-name: Skibidi Fabric v2.3 Package
+name: Skibidi Fabric v2.3.1 Build
 on:
   push:
     branches:
       - chatgpt-skibidi-build-20260919
     paths:
-      - v23-trigger.txt
+      - v231-trigger.txt
       - .github/workflows/skibidi-build.yml
 jobs:
-  package:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,7 +18,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.1'
-      - name: Reconstruct exact tested source
+      - name: Reconstruct v2.3 source
         run: |
           cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
           tar -xzf payload.tar.gz
@@ -37,18 +37,52 @@ jobs:
           mkdir -p v23-final
           tar -xzf v23-final.tar.gz -C v23-final
           cp -a v23-final/. skibidi-gh-build-min/
-      - name: Build and remap
+      - name: Overlay any-light spawn patch
+        run: |
+          base64 -d skibidi-v231-patch.b64 > v231-patch.tar.gz
+          echo "2fd8f5e8e94f11d5cda3a9cc6e9081bf52fb651caa5fc52d63fdfc8874745bcc  v231-patch.tar.gz" | sha256sum -c -
+          tar -xzf v231-patch.tar.gz
+          cp -a skibidi-v231-patch/. skibidi-gh-build-min/
+      - name: Verify spawn rule source
+        working-directory: skibidi-gh-build-min
+        run: |
+          grep -q 'mod_version=2.3.1' gradle.properties
+          grep -q 'SpawnPlacements.register' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'Mob::checkMobSpawnRules' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'BiomeSelectors.foundInOverworld()' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'BiomeModifications.addSpawn' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          ! grep -q 'checkMonsterSpawnRules' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+      - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
         run: gradle clean build --stacktrace --no-configuration-cache
-      - name: Verify compiled code
+      - name: Dedicated server startup test
+        working-directory: skibidi-gh-build-min
         run: |
-          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar | tee jar-code-v23.txt
-          grep -q 'GToiletEntity.class' jar-code-v23.txt
-          grep -q 'GToiletLaserLoopSound.class' jar-code-v23.txt
-          grep -q 'SkibidiAttachments.class' jar-code-v23.txt
-          ! grep -q 'SkibidiZombieRenderer.class' jar-code-v23.txt
+          mkdir -p run
+          echo 'eula=true' > run/eula.txt
+          set +e
+          timeout 75s gradle runServer --no-daemon --no-configuration-cache > ../server-v231.log 2>&1
+          code=$?
+          set -e
+          tail -n 180 ../server-v231.log
+          grep -q 'Skibidi Toilet initialized' ../server-v231.log
+          grep -q 'Done (' ../server-v231.log
+          ! grep -q 'Minecraft Crash Report' ../server-v231.log
+          ! grep -q 'Could not execute entrypoint' ../server-v231.log
+          echo "server smoke exit code: $code"
+      - name: Inspect production jar
+        run: |
+          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar
+          unzip -p skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar fabric.mod.json | grep -q '"version": "2.3.1"'
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar | tee jar-code-v231.txt
+          grep -q 'ModEntityTypes.class' jar-code-v231.txt
+          grep -q 'GToiletEntity.class' jar-code-v231.txt
+          grep -q 'GToiletLaserLoopSound.class' jar-code-v231.txt
+          ! grep -q 'SkibidiZombieRenderer.class' jar-code-v231.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v23-code
-          path: skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.0.jar
+          name: skibidi-v231-code
+          path: |
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.3.1.jar
+            server-v231.log
+            jar-code-v231.txt
