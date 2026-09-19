@@ -24,7 +24,7 @@ jobs:
           tar -xzf payload.tar.gz
       - name: Overlay v2 source rewrite
         run: |
-          base64 -d skibidi-v2-patch.b64 > v2-patch.tar.gz
+          cat v2p00.txt v2p01.txt v2p02.txt v2p03.txt v2p04.txt | base64 -d > v2-patch.tar.gz
           tar -xzf v2-patch.tar.gz
           cp -a skibidi-v2-patch/. skibidi-gh-build-min/
           rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
