@@ -107,7 +107,7 @@ jobs:
           import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
           import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
           import net.minecraft.core.registries.BuiltInRegistries;
-          import net.minecraft.resources.ResourceLocation;
+          import net.minecraft.resources.Identifier;
 
           @SuppressWarnings("UnstableApiUsage")
           public final class Cs2FabricWorldLoadGameTest implements FabricClientGameTest {
@@ -117,15 +117,15 @@ jobs:
                       throw new AssertionError("Expected 34 guns, got " + ModItems.ALL_GUNS.size());
                   }
 
-                  ResourceLocation ak = ResourceLocation.fromNamespaceAndPath("cs2fabric", "ak_47");
+                  Identifier ak = Identifier.fromNamespaceAndPath("cs2fabric", "ak_47");
                   if (!BuiltInRegistries.ITEM.containsKey(ak)) {
                       throw new AssertionError("AK-47 is missing from the item registry");
                   }
 
                   try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
-                      singleplayer.getClientLevel().waitForChunksRender();
+                      singleplayer.getClientWorld().waitForChunksRender();
 
-                      ResourceLocation ammo = ResourceLocation.fromNamespaceAndPath("cs2fabric", "ammo");
+                      Identifier ammo = Identifier.fromNamespaceAndPath("cs2fabric", "ammo");
                       if (!BuiltInRegistries.ITEM.containsKey(ammo)) {
                           throw new AssertionError("Ammo item disappeared after integrated server load");
                       }
