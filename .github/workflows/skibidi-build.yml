@@ -3,27 +3,40 @@ on:
   push:
     branches:
       - chatgpt-skibidi-build-20260919
+    paths:
+      - v2-trigger.txt
+      - .github/workflows/skibidi-build.yml
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.1'
-      - name: Decode source
+      - name: Decode v2 source
         run: |
-          cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
-          sha256sum payload.tar.gz
-          tar -xzf payload.tar.gz
+          cat v2chunk00.txt v2chunk01.txt v2chunk02.txt v2chunk03.txt v2chunk04.txt v2chunk05.txt v2chunk06.txt v2chunk07.txt | base64 -d > v2-payload.tar.gz
+          echo "60a5c3180db2fe0e14bac1866cf23ede20ea8cd369c46e1c63fe8f3d7eeefdea  v2-payload.tar.gz" | sha256sum -c -
+          tar -xzf v2-payload.tar.gz
+      - name: Offline structural validation
+        working-directory: skibidi-v2-build-payload
+        run: python3 tools/validate_project.py
       - name: Build and remap
-        working-directory: skibidi-gh-build-min
-        run: gradle build --stacktrace --no-configuration-cache
+        working-directory: skibidi-v2-build-payload
+        run: gradle clean build --stacktrace --no-configuration-cache
+      - name: Inspect jars
+        run: |
+          ls -lah skibidi-v2-build-payload/build/libs/
+          unzip -l skibidi-v2-build-payload/build/libs/skibidi-toilet-2.0.0.jar | tee jar-contents.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-compiled
-          path: skibidi-gh-build-min/build/libs/*.jar
+          name: skibidi-v2-compiled
+          path: |
+            skibidi-v2-build-payload/build/libs/skibidi-toilet-2.0.0.jar
+            skibidi-v2-build-payload/build/libs/skibidi-toilet-2.0.0-sources.jar
+            jar-contents.txt
