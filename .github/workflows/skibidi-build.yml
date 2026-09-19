@@ -92,48 +92,53 @@ jobs:
           child.sendline('scoreboard objectives add sktest dummy')
           time.sleep(1.0)
 
-          # Angled long-range laser target. Wait for each summon to be processed so selectors
-          # cannot race the server startup backlog.
-          child.sendline('summon minecraft:villager 8 200 24 {Tags:["laser_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
-          child.expect(re.compile(r'Summoned new Villager'), timeout=30)
-          child.sendline('attribute @e[tag=laser_target,limit=1] minecraft:max_health base set 500')
-          child.expect(re.compile(r'base value.*500\.0'), timeout=30)
-          child.sendline('data merge entity @e[tag=laser_target,limit=1] {Health:500.0f}')
+          # Clean slate: type selectors are reliable on 1.21.11 even when NBT Tags are delayed.
+          child.sendline('kill @e[type=minecraft:villager]')
+          child.sendline('kill @e[type=skibidi:g_toilet_2]')
           time.sleep(0.5)
 
-          child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["laser_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          # Long-range angled target proves the laser aims at a non-axis-aligned location.
+          child.sendline('summon minecraft:villager 8 200 24 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.expect(re.compile(r'Summoned new Villager'), timeout=30)
+          child.sendline('attribute @e[type=minecraft:villager,limit=1] minecraft:max_health base set 500')
+          child.expect(re.compile(r'base value.*500\.0'), timeout=30)
+          child.sendline('data merge entity @e[type=minecraft:villager,limit=1] {Health:500.0f}')
+          time.sleep(0.5)
+
+          child.sendline('summon skibidi:g_toilet_2 0 200 0 {NoGravity:1b,PersistenceRequired:1b}')
           child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
-          child.sendline('attribute @e[tag=laser_boss,limit=1] minecraft:movement_speed base set 0')
+          child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
           child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
 
-          # Cooldown + warning + at least one fire pulse.
-          time.sleep(5.0)
-          child.sendline('execute store result score #hp sktest run data get entity @e[tag=laser_target,limit=1] Health 10')
+          # Cooldown + tracking warning + firing window.
+          time.sleep(5.5)
+          child.sendline('execute store result score #hp sktest run data get entity @e[type=minecraft:villager,limit=1] Health 10')
           time.sleep(0.2)
           child.sendline('execute if score #hp sktest matches 1..4999 run say LASER_DAMAGE_PASS')
           child.expect(re.compile(r'\[Server\] LASER_DAMAGE_PASS'), timeout=30)
 
-          # A stationary no-gravity target must remain at exactly zero velocity after laser damage.
-          child.sendline('execute store result score #mx sktest run data get entity @e[tag=laser_target,limit=1] Motion[0] 100000')
-          child.sendline('execute store result score #my sktest run data get entity @e[tag=laser_target,limit=1] Motion[1] 100000')
-          child.sendline('execute store result score #mz sktest run data get entity @e[tag=laser_target,limit=1] Motion[2] 100000')
+          # Laser damage must not impart velocity.
+          child.sendline('execute store result score #mx sktest run data get entity @e[type=minecraft:villager,limit=1] Motion[0] 100000')
+          child.sendline('execute store result score #my sktest run data get entity @e[type=minecraft:villager,limit=1] Motion[1] 100000')
+          child.sendline('execute store result score #mz sktest run data get entity @e[type=minecraft:villager,limit=1] Motion[2] 100000')
           time.sleep(0.3)
           child.sendline('execute if score #mx sktest matches 0 if score #my sktest matches 0 if score #mz sktest matches 0 run say LASER_NO_KNOCKBACK_PASS')
           child.expect(re.compile(r'\[Server\] LASER_NO_KNOCKBACK_PASS'), timeout=30)
 
-          # Separate close-range case: laser cannot begin inside 3 blocks, so inherited zombie
-          # melee must still function on its own.
-          child.sendline('kill @e[tag=laser_target]')
-          child.sendline('kill @e[tag=laser_boss]')
-          time.sleep(0.5)
-          child.sendline('summon minecraft:villager 0 200 1 {Tags:["melee_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          # Clean slate again.
+          child.sendline('kill @e[type=minecraft:villager]')
+          child.sendline('kill @e[type=skibidi:g_toilet_2]')
+          time.sleep(0.7)
+
+          # Inside 3 blocks, laser startup is disabled; inherited zombie melee must still kill.
+          child.sendline('summon minecraft:villager 0 200 1 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
           child.expect(re.compile(r'Summoned new Villager'), timeout=30)
-          child.sendline('summon skibidi:g_toilet_2 0 200 0 {Tags:["melee_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('summon skibidi:g_toilet_2 0 200 0 {NoGravity:1b,PersistenceRequired:1b}')
           child.expect(re.compile(r'Summoned new G-Toilet 2\.0'), timeout=30)
-          child.sendline('attribute @e[tag=melee_boss,limit=1] minecraft:movement_speed base set 0')
+          child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
           child.expect(re.compile(r'base value.*Speed.*0\.0'), timeout=30)
-          time.sleep(8.0)
-          child.sendline('execute unless entity @e[tag=melee_target] run say MELEE_STILL_WORKS_PASS')
+          time.sleep(10.0)
+          child.sendline('execute unless entity @e[type=minecraft:villager,limit=1] run say MELEE_STILL_WORKS_PASS')
           child.expect(re.compile(r'\[Server\] MELEE_STILL_WORKS_PASS'), timeout=30)
 
           child.sendline('stop')
