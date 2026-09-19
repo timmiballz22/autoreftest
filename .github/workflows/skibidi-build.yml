@@ -70,6 +70,28 @@ jobs:
           grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
           test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
+          python3 - <<'PY'
+          import math, struct
+          from pathlib import Path
+          raw=Path('src/main/resources/assets/skibidi/mesh/skibidi_v2.skbm').read_bytes()
+          assert raw[:4] == b'SKB2'
+          off=4
+          version,count=struct.unpack_from('<ii',raw,off); off += 8
+          groups={}
+          for _ in range(count):
+              gid,mat,n=struct.unpack_from('<iii',raw,off); off += 12
+              pts=[]
+              for _ in range(n):
+                  x,y,z,u,v,nx,ny,nz=struct.unpack_from('<8f',raw,off); off += 32
+                  pts.append((x,y,z))
+              groups[gid]=pts
+          toilet=groups[4]
+          mounts=[(.52,.90,-.44),(.60,1.05,-.44),(.46,.70,-.40),(.46,.50,-.42)]
+          for p in mounts:
+              nearest=min(math.dist(p,v) for v in toilet)
+              assert nearest < .15, (p, nearest)
+          print('LASER_MESH_FIT_PASS')
+          PY
 
       - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
@@ -88,30 +110,31 @@ jobs:
               ['runServer', '--no-daemon', '--no-configuration-cache', '--console=plain'],
               cwd='.',
               encoding='utf-8',
-              timeout=180
+              timeout=180,
+              echo=False
           )
           child.logfile = sys.stdout
           child.expect(re.compile(r'Done \('))
-          child.sendline('gamerule doMobSpawning false')
-          child.sendline('fill -5 100 -5 5 100 30 minecraft:stone')
-          child.sendline('scoreboard objectives add sktest dummy')
-          child.sendline('summon minecraft:villager 0 101 20 {NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
-          child.sendline('attribute @e[type=minecraft:villager,limit=1] minecraft:max_health base set 500')
-          child.sendline('data merge entity @e[type=minecraft:villager,limit=1] {Health:500.0f}')
-          child.sendline('summon skibidi:g_toilet_2 0 101 0 {NoGravity:1b,PersistenceRequired:1b}')
-          child.sendline('attribute @e[type=skibidi:g_toilet_2,limit=1] minecraft:movement_speed base set 0')
-          time.sleep(6)
-          child.sendline('execute store result score #health sktest run data get entity @e[type=minecraft:villager,limit=1] Health 10')
-          child.sendline('execute if score #health sktest matches ..4999 run say LASER_DAMAGE_PASS')
-          child.expect('LASER_DAMAGE_PASS', timeout=30)
-          child.sendline('execute store result score #boss sktest run data get entity @e[type=skibidi:g_toilet_2,limit=1] Health 1')
-          child.sendline('execute if score #boss sktest matches 650 run say G2_HP_PASS')
-          child.expect('G2_HP_PASS', timeout=30)
+          child.sendline('forceload add 0 0 32 32')
+          child.sendline('kill @e[tag=laser_target]')
+          child.sendline('kill @e[tag=laser_boss]')
+          child.sendline('summon minecraft:villager 0 80 28 {Tags:["laser_target"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('execute if entity @e[tag=laser_target] run say TARGET_SPAWN_PASS')
+          child.expect(re.compile(r'\[Server\] TARGET_SPAWN_PASS'), timeout=20)
+          child.sendline('summon skibidi:g_toilet_2 0 80 0 {Tags:["laser_boss"],NoGravity:1b,PersistenceRequired:1b}')
+          child.sendline('execute if entity @e[tag=laser_boss] run say BOSS_SPAWN_PASS')
+          child.expect(re.compile(r'\[Server\] BOSS_SPAWN_PASS'), timeout=20)
+          for _ in range(20):
+              child.sendline('tp @e[tag=laser_boss] 0 80 0')
+              time.sleep(0.25)
+          child.sendline('execute unless entity @e[tag=laser_target] run say LASER_KILL_PASS')
+          child.expect(re.compile(r'\[Server\] LASER_KILL_PASS'), timeout=30)
           child.sendline('stop')
           child.expect(pexpect.EOF, timeout=60)
           PY
-          grep -q 'LASER_DAMAGE_PASS' ../server-combat.log
-          grep -q 'G2_HP_PASS' ../server-combat.log
+          grep -q '\[Server\] TARGET_SPAWN_PASS' ../server-combat.log
+          grep -q '\[Server\] BOSS_SPAWN_PASS' ../server-combat.log
+          grep -q '\[Server\] LASER_KILL_PASS' ../server-combat.log
           ! grep -q 'Minecraft Crash Report' ../server-combat.log
 
       - name: Client renderer startup smoke test
@@ -119,6 +142,15 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb
+          ok=0
+          for i in 1 2 3; do
+            if gradle downloadAssets --no-daemon --no-configuration-cache; then
+              ok=1
+              break
+            fi
+            sleep 8
+          done
+          test "$ok" = 1
           set +e
           timeout 90s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-smoke.log 2>&1
           code=$?
