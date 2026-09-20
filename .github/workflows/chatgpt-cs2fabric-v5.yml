@@ -57,6 +57,31 @@ jobs:
           echo "a2be9b6214165f89f058c954913ba3b1dae15a52c94429665a77ccdaa29ffa39  /tmp/v5-overlay.zip" | sha256sum -c -
           unzip -qo /tmp/v5-overlay.zip -d /tmp/cs2src/cs2fabric
 
+          # Minecraft 1.21.11 API corrections verified against current mappings/compiler.
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path("/tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/CsGameManager.java")
+          s = p.read_text()
+          s = s.replace("message.getContent().getString().trim()", "message.signedContent().trim()")
+          s = s.replace("addEntityToTeam(player.getServer(),player,team)", "addEntityToTeam(player.level().getServer(),player,team)")
+          s = s.replace(
+              "player.teleportTo((ServerLevel)player.level(),s.getX()+.5,s.getY(),s.getZ()+.5,team==CsTeam.TERRORIST?90F:-90F,0F);preparePlayer(player);",
+              "player.teleportTo(s.getX()+.5,s.getY(),s.getZ()+.5);player.setYRot(team==CsTeam.TERRORIST?90F:-90F);player.setXRot(0F);preparePlayer(player);"
+          )
+          s = s.replace("sender.getServer().getPlayerList().getPlayers()", "sender.level().getServer().getPlayerList().getPlayers()")
+          s = s.replace("sender.getServer().getPlayerList().broadcastSystemMessage", "sender.level().getServer().getPlayerList().broadcastSystemMessage")
+          s = s.replace(
+              "bot.moveTo(s.getX()+.5,s.getY(),s.getZ()+.5+dz,side==CsTeam.TERRORIST?90F:-90F,0F);",
+              "bot.setPos(s.getX()+.5,s.getY(),s.getZ()+.5+dz);bot.setYRot(side==CsTeam.TERRORIST?90F:-90F);bot.setXRot(0F);"
+          )
+          p.write_text(s)
+
+          p = Path("/tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/CsArenaBuilder.java")
+          s = p.read_text().replace("chunk.setUnsaved(true);", "chunk.markUnsaved();")
+          p.write_text(s)
+          PY
+
           # Retain the zero-i-frame / armor-resistance-bypass bullet data type from v0.4.1.
           mkdir -p /tmp/cs2src/cs2fabric/src/main/resources/data/cs2fabric/damage_type
           mkdir -p /tmp/cs2src/cs2fabric/src/main/resources/data/minecraft/tags/damage_type
