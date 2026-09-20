@@ -1,76 +1,99 @@
-name: Skibidi Fabric v2.4 Renderer Fix
+name: Skibidi Fabric v2.4.1 Renderer Repair
 on:
   push:
     branches:
       - chatgpt-skibidi-build-20260919
     paths:
-      - v24-trigger.txt
+      - v241-trigger.txt
       - .github/workflows/skibidi-build.yml
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.1'
 
-      - name: Reconstruct latest gameplay source
+      - name: Reconstruct latest known-good gameplay source
         run: |
           cat chunk00.txt chunk01.txt chunk02.txt chunk03.txt | base64 -d > payload.tar.gz
           tar -xzf payload.tar.gz
+
           cat v2p00.txt v2p01.txt v2p02.txt v2p03.txt v2p04.txt | base64 -d > v2-patch.tar.gz
           tar -xzf v2-patch.tar.gz
           cp -a skibidi-v2-patch/. skibidi-gh-build-min/
           rm -f skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           rm -f skibidi-gh-build-min/src/main/resources/data/minecraft/tags/entity_type/zombies.json
+
           cp fix/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           cp fix/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+
           base64 -d skibidi-v22-codepatch.b64 > v22-patch.tar.gz
           tar -xzf v22-patch.tar.gz
           cp -a skibidi-v2.2-codepatch/. skibidi-gh-build-min/
+
           cat v23f00.txt v23f01.txt v23f02.txt v23f03.txt | base64 -d > v23-final.tar.gz
           echo "b6e69e64418167b476551595c12766c8a9220faeec785b8a0ca8b34024c56c7d  v23-final.tar.gz" | sha256sum -c -
           mkdir -p v23-final
           tar -xzf v23-final.tar.gz -C v23-final
           cp -a v23-final/. skibidi-gh-build-min/
+
           cp v231/ModEntityTypes.java skibidi-gh-build-min/src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          cp v231/gradle.properties skibidi-gh-build-min/gradle.properties
+          sed -i 's/mod_version=2.3.1/mod_version=2.4.1/' skibidi-gh-build-min/gradle.properties
 
-      - name: Overlay renderer root-cause fix
+      - name: Replace broken model pipeline
         run: |
-          cp v24/SkibidiMesh.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
-          cp v24/SkibidiRenderer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
-          cp v24/SkibidiAttachments.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
-          cp v24/gradle.properties skibidi-gh-build-min/gradle.properties
+          cp fix4/SkibidiMesh.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
+          cp fix4/SkibidiMeshLayer.java skibidi-gh-build-min/src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          cp fix4/generate_v3.py skibidi-gh-build-min/generate_v3.py
+          cd skibidi-gh-build-min
+          python3 generate_v3.py
 
-      - name: Primitive topology and regression checks
+      - name: Model and gameplay regression checks
         working-directory: skibidi-gh-build-min
         run: |
-          grep -q 'mod_version=2.4.0' gradle.properties
-          grep -q 'i += 24' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
-          test "$(grep -c 'emitPackedVertex(vertices, i + 16' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java)" = 2
+          grep -q 'mod_version=2.4.1' gradle.properties
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java').read_text()
-          a=p.index('private static void face(')
-          b=p.index('private static void vertex(', a)
-          face=p[a:b]
-          assert face.count('vertex(pose,buffer') == 4, face.count('vertex(pose,buffer')
-          print('ATTACHMENT_QUAD_TOPOLOGY_PASS')
+          import struct, math
+          p=Path('src/main/resources/assets/skibidi/mesh/skibidi_v3.skbm')
+          raw=p.read_bytes()
+          assert raw[:4] == b'SKB3'
+          version,count=struct.unpack_from('<ii',raw,4)
+          assert (version,count)==(3,3)
+          off=12
+          actual=[]
+          for _ in range(count):
+              gid,mat,n=struct.unpack_from('<iii',raw,off); off += 12
+              actual.append((gid,mat,n))
+              vals=struct.unpack_from('<'+'f'*(n*8),raw,off)
+              assert all(math.isfinite(x) for x in vals)
+              off += n*8*4
+          assert actual == [(0,0,3426),(1,1,18),(2,2,720)], actual
+          assert off == len(raw)
+          print('V3_MESH_STRUCTURE_PASS', actual)
           PY
-          grep -q 'this.addLayer(new SkibidiMeshLayer' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
-          grep -q 'float modelX = -x \* scale' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
-          grep -q 'float modelY = 1.501F - y \* scale' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMesh.java
-          grep -q 'state.laserFiring' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiRenderer.java
-          grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
-          grep -q 'G2_LASER_Y = 0.90F' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiAttachments.java
+          grep -q 'HEAD_RENDER' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          grep -q 'INTERIOR_RENDER' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          grep -q 'TOILET_RENDER' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
+          grep -q 'state.laserFiring' src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiMeshLayer.java
           grep -q 'Mob::checkMobSpawnRules' src/main/java/dev/ashenthefox/skibidi/ModEntityTypes.java
+          grep -q 'target.hurtServer' src/main/java/dev/ashenthefox/skibidi/entity/GToiletEntity.java
+          grep -q '!this.entity.isLaserFiring()' src/client/java/dev/ashenthefox/skibidi/client/sound/GToiletLaserLoopSound.java
           test ! -f src/client/java/dev/ashenthefox/skibidi/client/render/SkibidiZombieRenderer.java
           test ! -f src/main/resources/data/minecraft/tags/entity_type/zombies.json
+          test -f src/main/resources/assets/skibidi/textures/entity/skibidi_head.png
+          test -f src/main/resources/assets/skibidi/textures/entity/skibidi_interior.png
+          test -f src/main/resources/assets/skibidi/textures/entity/skibidi_toilet.png
 
       - name: Build and Loom remap
         working-directory: skibidi-gh-build-min
@@ -80,9 +103,9 @@ jobs:
         working-directory: skibidi-gh-build-min
         run: |
           mkdir -p run
-          echo "eula=true" > run/eula.txt
+          echo 'eula=true' > run/eula.txt
           python3 -m pip install --disable-pip-version-check -q pexpect
-          python3 - <<'PY' | tee ../server-v24.log
+          python3 - <<'PY' | tee ../server-v241.log
           import pexpect, re, sys, time
           child=pexpect.spawn(
               'gradle',
@@ -108,9 +131,9 @@ jobs:
           child.sendline('stop')
           child.expect(pexpect.EOF, timeout=60)
           PY
-          grep -q '\[Server\] G2_HP_PASS' ../server-v24.log
-          grep -q '\[Server\] LASER_KILL_PASS' ../server-v24.log
-          ! grep -q 'Minecraft Crash Report' ../server-v24.log
+          grep -q '\[Server\] G2_HP_PASS' ../server-v241.log
+          grep -q '\[Server\] LASER_KILL_PASS' ../server-v241.log
+          ! grep -q 'Minecraft Crash Report' ../server-v241.log
 
       - name: Client renderer startup smoke
         working-directory: skibidi-gh-build-min
@@ -127,32 +150,36 @@ jobs:
           done
           test "$ok" = 1
           set +e
-          timeout 90s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-v24.log 2>&1
+          timeout 90s xvfb-run -a gradle runClient --no-daemon --no-configuration-cache > ../client-v241.log 2>&1
           code=$?
           set -e
-          tail -n 200 ../client-v24.log
-          grep -q 'Skibidi Toilet initialized' ../client-v24.log
-          ! grep -q 'Minecraft Crash Report' ../client-v24.log
-          ! grep -q 'ExceptionInInitializerError' ../client-v24.log
-          ! grep -q 'Could not execute entrypoint' ../client-v24.log
+          tail -n 220 ../client-v241.log
+          grep -q 'Skibidi Toilet initialized' ../client-v241.log
+          ! grep -q 'Minecraft Crash Report' ../client-v241.log
+          ! grep -q 'ExceptionInInitializerError' ../client-v241.log
+          ! grep -q 'Could not execute entrypoint' ../client-v241.log
           echo "client smoke exit code: $code"
 
       - name: Inspect production JAR
         run: |
-          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
-          unzip -p skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar fabric.mod.json | grep -q '"version": "2.4.0"'
-          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar | tee jar-v24.txt
-          grep -q 'SkibidiMesh.class' jar-v24.txt
-          grep -q 'SkibidiAttachments.class' jar-v24.txt
-          grep -q 'GToiletEntity.class' jar-v24.txt
-          grep -q 'GToiletLaserLoopSound.class' jar-v24.txt
-          ! grep -q 'SkibidiZombieRenderer.class' jar-v24.txt
+          unzip -t skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.1.jar
+          unzip -p skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.1.jar fabric.mod.json | grep -q '"version": "2.4.1"'
+          unzip -l skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.1.jar | tee jar-v241.txt
+          grep -q 'assets/skibidi/mesh/skibidi_v3.skbm' jar-v241.txt
+          grep -q 'assets/skibidi/textures/entity/skibidi_head.png' jar-v241.txt
+          grep -q 'assets/skibidi/textures/entity/skibidi_interior.png' jar-v241.txt
+          grep -q 'assets/skibidi/textures/entity/skibidi_toilet.png' jar-v241.txt
+          grep -q 'SkibidiMesh.class' jar-v241.txt
+          grep -q 'SkibidiMeshLayer.class' jar-v241.txt
+          grep -q 'GToiletEntity.class' jar-v241.txt
+          grep -q 'GToiletLaserLoopSound.class' jar-v241.txt
+          ! grep -q 'SkibidiZombieRenderer.class' jar-v241.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: skibidi-v24-code
+          name: skibidi-v241-final
           path: |
-            skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.0.jar
-            server-v24.log
-            client-v24.log
-            jar-v24.txt
+            skibidi-gh-build-min/build/libs/skibidi-toilet-2.4.1.jar
+            server-v241.log
+            client-v241.log
+            jar-v241.txt
