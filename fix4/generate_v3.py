@@ -4,49 +4,43 @@ import math
 import struct
 
 root = Path("src/main/resources/assets/skibidi")
-source = root / "mesh" / "skibidi_v2.skbm"
+source = root / "mesh" / "skibidi.skbm"
 target = root / "mesh" / "skibidi_v3.skbm"
 raw = source.read_bytes()
 
-if raw[:4] != b"SKB2":
-    raise SystemExit("Expected SKB2 source mesh")
-version, group_count = struct.unpack_from("<ii", raw, 4)
-if version != 2:
+if raw[:4] != b"SKBM":
+    raise SystemExit("Expected original SKBM source mesh")
+version, head_count, toilet_count = struct.unpack_from("<iii", raw, 4)
+if version != 1:
     raise SystemExit(f"Unexpected source mesh version {version}")
+if (head_count, toilet_count) != (3444, 720):
+    raise SystemExit(f"Unexpected source counts {(head_count, toilet_count)}")
 
-offset = 12
-groups = {}
-for _ in range(group_count):
-    gid, material, count = struct.unpack_from("<iii", raw, offset)
-    offset += 12
-    records = []
-    for _ in range(count):
-        records.append(list(struct.unpack_from("<8f", raw, offset)))
-        offset += 32
-    groups[gid] = records
-
+offset = 16
+head_and_interior = []
+for _ in range(head_count):
+    head_and_interior.append(list(struct.unpack_from("<8f", raw, offset)))
+    offset += 32
+toilet = []
+for _ in range(toilet_count):
+    toilet.append(list(struct.unpack_from("<8f", raw, offset)))
+    offset += 32
 if offset != len(raw):
     raise SystemExit("Trailing bytes in source mesh")
-head_and_interior = groups.get(0)
-toilet = groups.get(4)
-if head_and_interior is None or toilet is None:
-    raise SystemExit("Missing expected v2 source groups")
-if len(head_and_interior) != 3444 or len(toilet) != 720:
-    raise SystemExit(
-        f"Unexpected v2 group sizes: head={len(head_and_interior)}, toilet={len(toilet)}"
-    )
 
-# The v2 atlas packer emitted the 18 mouth-interior vertices after the 3426
-# ordinary head vertices. Verify the geometry signature before splitting.
+# The original packer concatenated head material 0 then mouth/interior material 1.
+# Verify that exact known boundary before splitting so a changed source fails loudly.
 head = [row[:] for row in head_and_interior[:-18]]
 interior = [row[:] for row in head_and_interior[-18:]]
+if len(head) != 3426 or len(interior) != 18:
+    raise SystemExit("Unexpected material split")
 if not all(abs(row[2] - (-0.309)) < 1.0e-6 for row in interior):
     raise SystemExit("Interior signature mismatch; refusing unsafe mesh split")
 if any(abs(row[2] - (-0.309)) < 1.0e-6 for row in head):
     raise SystemExit("Interior signature leaked into head group")
 
-# Reverse only the v2 atlas UV transform for the two small head materials.
-# The toilet keeps its proven top-half atlas coordinates and texture.
+# Undo the old atlas transforms for the two small materials.
+# Toilet keeps its proven top-half atlas mapping/texture.
 for row in head:
     row[3] = row[3] * 8.0
     row[4] = (row[4] - 0.5) * 8.0
