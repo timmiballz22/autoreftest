@@ -1,0 +1,231 @@
+name: Build and launch-test CS2 Fabric v0.5.0 Teams Arenas
+
+on:
+  push:
+    branches: [chatgpt-cs2fabric-v5-teams-arenas]
+    paths:
+      - 'chatgpt-cs2fabric-v5/**'
+      - '.github/workflows/chatgpt-cs2fabric-v5.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified full-arsenal source
+        shell: bash
+        run: |
+          {
+            cat chatgpt-cs2fabric/part01.b64
+            cat chatgpt-cs2fabric/part02.b64
+            cat chatgpt-cs2fabric/fix03/*.b64
+            cat chatgpt-cs2fabric/part04.b64
+            cat chatgpt-cs2fabric/part05.b64
+            cat chatgpt-cs2fabric/fix06/*.b64
+          } | tr -d '\n\r' | base64 -d > /tmp/cs2baseline.zip
+          echo "4ef90835de217c9eef9918473482f55f2b28dc1e5d45800420fcbf5b963d6ba3  /tmp/cs2baseline.zip" | sha256sum -c -
+          mkdir -p /tmp/cs2src
+          unzip -q /tmp/cs2baseline.zip -d /tmp/cs2src
+
+          cat chatgpt-cs2fabric-v4/payload/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/v4-overlay.zip
+          echo "2bceb372664c35c0391bd20d4db822efe4e2fedaf250fc355b164540840d9234  /tmp/v4-overlay.zip" | sha256sum -c -
+          unzip -qo /tmp/v4-overlay.zip -d /tmp/cs2src/cs2fabric
+
+          # Preserve the final current-stat corrections from v0.4.x.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("/tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/ModItems.java")
+          s = p.read_text()
+          s = s.replace('"glock_18", "Glock-18", 6.000F, 4.0F, 20, 120, 400,',
+                        '"glock_18", "Glock-18", 6.000F, 4.0F, 20, 60, 400,')
+          s = s.replace('"p2000", "P2000", 7.000F, 4.0F, 13, 52, 352,',
+                        '"p2000", "P2000", 7.000F, 4.0F, 13, 52, 353,')
+          s = s.replace('"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 352,',
+                        '"usp_s", "USP-S", 7.000F, 4.0F, 12, 24, 353,')
+          s = s.replace('"awp", "AWP", 23.000F, 4.0F, 5, 10, 41,',
+                        '"awp", "AWP", 20.000F, 4.0F, 5, 10, 41,')
+          p.write_text(s)
+          PY
+
+          # v0.4.1 custom bullet damage type key.
+          cp chatgpt-cs2fabric-v4.1/ModDamageTypes.java /tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/ModDamageTypes.java
+
+          # Apply the v0.5.0 source overlay.
+          cat chatgpt-cs2fabric-v5/payload/part*.b64 | tr -d '\n\r' | base64 -d > /tmp/v5-overlay.zip
+          echo "a2be9b6214165f89f058c954913ba3b1dae15a52c94429665a77ccdaa29ffa39  /tmp/v5-overlay.zip" | sha256sum -c -
+          unzip -qo /tmp/v5-overlay.zip -d /tmp/cs2src/cs2fabric
+
+          # Retain the zero-i-frame / armor-resistance-bypass bullet data type from v0.4.1.
+          mkdir -p /tmp/cs2src/cs2fabric/src/main/resources/data/cs2fabric/damage_type
+          mkdir -p /tmp/cs2src/cs2fabric/src/main/resources/data/minecraft/tags/damage_type
+          cat > /tmp/cs2src/cs2fabric/src/main/resources/data/cs2fabric/damage_type/bullet.json <<'JSON'
+          {
+            "exhaustion": 0.0,
+            "message_id": "cs2fabric.bullet",
+            "scaling": "never",
+            "effects": "hurt",
+            "death_message_type": "default"
+          }
+          JSON
+          for tag in bypasses_cooldown bypasses_armor bypasses_enchantments bypasses_effects bypasses_resistance bypasses_shield bypasses_wolf_armor; do
+            cat > "/tmp/cs2src/cs2fabric/src/main/resources/data/minecraft/tags/damage_type/${tag}.json" <<JSON
+          {
+            "replace": false,
+            "values": ["cs2fabric:bullet"]
+          }
+          JSON
+          done
+
+          grep '^mod_version=0.5.0$' /tmp/cs2src/cs2fabric/gradle.properties
+          test -f /tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/CsGameManager.java
+          test -f /tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/CsBotEntity.java
+          test -f /tmp/cs2src/cs2fabric/src/main/java/dev/cs2fabric/mixin/BiomeLocateMixin.java
+
+          cat >> /tmp/cs2src/cs2fabric/build.gradle <<'GRADLE'
+
+          repositories {
+              maven {
+                  name = "Modrinth"
+                  url = uri("https://api.modrinth.com/maven")
+              }
+          }
+
+          dependencies {
+              productionRuntimeMods "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+              productionRuntimeMods "maven.modrinth:AANobbMI:rkdTcxoT"
+          }
+
+          tasks.register("prodClient", net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+              dependsOn tasks.named("remapJar")
+              mods.from(file("build/libs/cs2-fabric-${project.mod_version}.jar"))
+              useXVFB = true
+              runDir = file("run-prod")
+          }
+          GRADLE
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Compile and remap
+        working-directory: /tmp/cs2src/cs2fabric
+        run: gradle --no-daemon clean build --stacktrace
+
+      - name: Audit v0.5.0 production JAR
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: python
+        run: |
+          import json, pathlib, zipfile, re
+          jar = pathlib.Path("build/libs/cs2-fabric-0.5.0.jar")
+          assert jar.exists(), jar
+          with zipfile.ZipFile(jar) as z:
+              names = set(z.namelist())
+              mod = json.loads(z.read("fabric.mod.json"))
+              assert mod["version"] == "0.5.0"
+              assert mod["environment"] == "*"
+
+              for cfgname in ("cs2fabric.common.mixins.json", "cs2fabric.client.mixins.json"):
+                  cfg = json.loads(z.read(cfgname))
+                  pkg = cfg["package"].replace(".", "/")
+                  for group in ("mixins","client","server"):
+                      for cls in cfg.get(group, []):
+                          p = f"{pkg}/{cls.replace('.', '/')}.class"
+                          assert p in names, p
+
+              required = [
+                  "dev/cs2fabric/CsTeam.class",
+                  "dev/cs2fabric/CsArena.class",
+                  "dev/cs2fabric/CsArenaBuilder.class",
+                  "dev/cs2fabric/CsGameManager.class",
+                  "dev/cs2fabric/CsBotEntity.class",
+                  "dev/cs2fabric/ModEntityTypes.class",
+                  "dev/cs2fabric/GunDamageSource.class",
+                  "dev/cs2fabric/mixin/BiomeLocateMixin.class",
+                  "dev/cs2fabric/client/Cs2TeamsClient.class",
+                  "dev/cs2fabric/client/TeamSelectScreen.class",
+                  "dev/cs2fabric/client/CsBotRenderer.class",
+                  "data/cs2fabric/worldgen/biome/dust_ii.json",
+                  "data/cs2fabric/worldgen/biome/inferno.json",
+                  "data/cs2fabric/worldgen/biome/cargo.json",
+                  "data/cs2fabric/worldgen/biome/mirage.json",
+                  "data/cs2fabric/worldgen/biome/pool_day.json",
+                  "data/cs2fabric/damage_type/bullet.json",
+                  "data/minecraft/tags/damage_type/bypasses_cooldown.json",
+              ]
+              for p in required:
+                  assert p in names, p
+
+              lang = json.loads(z.read("assets/cs2fabric/lang/en_us.json"))
+              assert lang["death.attack.cs2fabric.bullet.item"] == "%1$s was shot by %2$s using [%3$s]"
+
+          gm = pathlib.Path("src/main/java/dev/cs2fabric/CsGameManager.java").read_text()
+          bot = pathlib.Path("src/main/java/dev/cs2fabric/CsBotEntity.java").read_text()
+          arenas = pathlib.Path("src/main/java/dev/cs2fabric/CsArena.java").read_text()
+          guns = pathlib.Path("src/main/java/dev/cs2fabric/GunServerLogic.java").read_text()
+
+          checks = {
+              "case-insensitive Counter-Strike trigger": 'equalsIgnoreCase("Counter-Strike")' in gm,
+              "5 minute match": "6000" in gm,
+              "10v10 maintenance": "10" in gm and "maintain" in gm,
+              "T/CT scoreboard teams": "Terrorist" in gm and "CounterTerrorist" in gm,
+              "random side gun bots": "randomGun" in bot,
+              "totem offhand": "TOTEM_OF_UNDYING" in bot,
+              "armor bots": "EquipmentSlot" in bot,
+              "bot gunfire": "requestBotFire" in guns,
+              "five locatable custom biomes": sum(x in arenas for x in ("dust_ii","inferno","cargo","mirage","pool_day")) == 5,
+              "AWP ten-heart floor": 'Math.max(20.0F, damage)' in guns,
+              "gun i-frame reset": "invulnerableTime = 0" in guns,
+          }
+          for k,v in checks.items():
+              print(k, "OK" if v else "FAIL")
+              assert v
+
+      - name: Install XVFB
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb
+
+      - name: Production launch with Sodium 0.8.14
+        working-directory: /tmp/cs2src/cs2fabric
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM 90s gradle --no-daemon prodClient --stacktrace > /tmp/prodclient-console.log 2>&1
+          code=$?
+          set -e
+          if [ -f run-prod/logs/latest.log ]; then cat run-prod/logs/latest.log; fi
+          cat /tmp/prodclient-console.log
+
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
+          logs="/tmp/prodclient-console.log"
+          if [ -f run-prod/logs/latest.log ]; then logs="$logs run-prod/logs/latest.log"; fi
+
+          if grep -Eqi 'InvalidMixinException|MixinApplyError|MixinTransformerError|ClassNotFoundException.*cs2fabric|Could not execute entrypoint|Exception in thread "main"|Crash report saved|Failed to parse|Registry remapping failed|Errors in currently selected data packs' $logs; then
+            echo "Detected production startup/resource failure"
+            exit 1
+          fi
+          if ! grep -Eqi 'sodium 0\.8\.14|Sodium' $logs; then
+            echo "Sodium not observed"
+            exit 1
+          fi
+          echo "Production launch survived with Sodium and v0.5.0 resources."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cs2-fabric-v0.5.0-code
+          path: /tmp/cs2src/cs2fabric/build/libs/cs2-fabric-0.5.0.jar
+          if-no-files-found: error
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cs2-fabric-v0.5.0-launch-logs
+          path: |
+            /tmp/prodclient-console.log
+            /tmp/cs2src/cs2fabric/run-prod/logs/latest.log
+          if-no-files-found: ignore
