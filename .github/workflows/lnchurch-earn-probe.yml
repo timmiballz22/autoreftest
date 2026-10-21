@@ -1,4 +1,4 @@
-name: Verify agent account enrollment
+name: Verify agent payouts
 on:
   push:
     branches: [lnchurch-worker-20261021]
@@ -11,13 +11,11 @@ jobs:
       - run: |
           python - <<'PY'
           import requests,json
-          u='https://furryfragz-agent-earn-hub.vercel.app/status.json'
+          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=15)
+          print('HTTP',r.status_code)
           try:
-              r=requests.get(u,timeout=20)
-              print('HTTP',r.status_code)
               d=r.json()
-              print('CHECKED',d.get('checked_at'))
-              for k,v in d.get('services',{}).items():
-                  print('SERVICE',k,json.dumps(v,ensure_ascii=False)[:24000])
-          except Exception as e:print('ERROR',str(e)[:900])
+              print('AT',d.get('checked_at'))
+              for k,v in d.get('services',{}).items():print('SERVICE',k,json.dumps(v,ensure_ascii=False)[:19000])
+          except Exception as e:print('ERROR',str(e)[:450])
           PY
