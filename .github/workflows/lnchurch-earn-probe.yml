@@ -9,36 +9,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Check 7 independent AI marketplaces without claiming or deposits
+      - name: Rank actual paid opportunities without risking deposits
         shell: bash
         run: |
           python - <<'PY'
-          import urllib.request,urllib.error,json
-          targets={
+          import json,urllib.request,urllib.error
+          urlmap={
             "basedagents":"https://api.basedagents.ai/v1/tasks?status=open",
-            "basedagents_runbook":"https://basedagents.ai/skill.md",
-            "agenthansa_public_offers":"https://www.agenthansa.com/api/offers/public",
+            "agenthansa_offers":"https://www.agenthansa.com/api/offers/public",
             "agenthansa_quests":"https://www.agenthansa.com/api/alliance-war/quests",
-            "agenthansa_side_quests":"https://www.agenthansa.com/api/side-quests",
-            "taskmarket":"https://api.taskmarket.dev/api/tasks",
-            "bountybook":"https://api.bountybook.ai/tasks?status=open",
-            "basebounty":"https://www.basebounty.app/",
-            "agentpact":"https://agentpact.ai/",
+            "taskmarket":"https://api.taskmarket.dev/api/tasks"
           }
-          for name,url in targets.items():
+          for name,url in urlmap.items():
             try:
-              req=urllib.request.Request(url,headers={"Accept":"application/json,text/markdown,text/plain,text/html","User-Agent":"ResearchAgent/1.0"})
-              with urllib.request.urlopen(req,timeout=13) as r:
-                data=r.read(140000).decode("utf-8","replace")
-                print("MARKET",name,"HTTP",r.status,"CHARS",len(data),flush=True)
-                if name in ["basedagents","agenthansa_public_offers","agenthansa_quests","agenthansa_side_quests","taskmarket","bountybook"]:
-                  try:
-                    j=json.loads(data)
-                    if isinstance(j,list): j={"items":j}
-                    print("JSON",name,str(j)[:35000],flush=True)
-                  except:print("RAW",name,data[:1600],flush=True)
-                elif name=="basedagents_runbook":
-                  print("RUNBOOK",data[:18000],flush=True)
-            except urllib.error.HTTPError as e:print("ERROR_HTTP",name,e.code,e.read(300).decode("utf-8","replace"),flush=True)
-            except Exception as e:print("ERROR_NET",name,type(e).__name__,str(e)[:200],flush=True)
+              with urllib.request.urlopen(url,timeout=20) as r:j=json.loads(r.read(200000))
+            except Exception as e:print("ERROR",name,str(e)[:150],flush=True);continue
+            if name=="basedagents":
+              t=j.get("tasks",[])
+              print("COUNT",name,len(t))
+              for x in t:
+                b=x.get("bounty") or {}
+                if not b and not x.get("bounty_amount"):continue
+                print("BA",x.get("task_id"),repr(x.get("title"))[:90],"PAY",b.get("amount_display") or x.get("bounty_amount"),"FUNDED", (x.get("escrow") or {}).get("status"),"CLAIM",x.get("claimable"),"NETWORK",b.get("network"),"PREQ",repr(x.get("description"))[:210],flush=True)
+            elif name=="taskmarket":
+              t=j.get("tasks",[])
+              print("COUNT",name,len(t))
+              for x in t:
+                if x.get("status")=="open" and x.get("submissionWindowOpen") and not x.get("stakeRequired"):
+                  print("TM",x.get("id"),x.get("referenceCode"),"REWARD",x.get("reward"),"MODE",x.get("mode"),"EXPIRES",x.get("expiryTime"),"DESC",repr(x.get("description"))[:420],flush=True)
+            elif name=="agenthansa_quests":
+              print("QUEST_KEYS",list(j)[:20],"QUOTA",j.get("pagination"),flush=True)
+              for k,v in j.items():
+                if isinstance(v,list):
+                  print("QUEST_ARRAY",k,len(v))
+                  for x in v[:30]:
+                    print("AHQ",str({f:x.get(f) for f in ["id","title","status","type","reward_amount","reward","prize_usdc","submission_count","deadline","ends_at"]}),flush=True)
+            else:
+              print("OFFER_KEYS",list(j)[:25] if isinstance(j,dict) else "list","RAW",str(j)[:3500],flush=True)
           PY
