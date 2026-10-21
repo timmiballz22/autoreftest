@@ -1,20 +1,19 @@
-name: Inspect payout wallet and agent challenges
+name: Confirm daily earning receipt
 on:
   push:
     branches: [lnchurch-worker-20261021]
 permissions:
   contents: read
 jobs:
-  inspect:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - run: |
           python - <<'PY'
-          import json,requests
-          j=requests.get('https://www.agenthansa.com/openapi.json',timeout=15).json()
-          for p in ['/api/agents/fluxa-wallet','/api/agents/wallet','/api/agents/payment-link','/api/agents/me/payout-destination','/api/agents/checkin/verify','/api/side-quests/submit']:
-             print('API',p,json.dumps(j['paths'].get(p),ensure_ascii=False)[:4000])
-          for k,v in j['components']['schemas'].items():
-             if any(x in k.lower() for x in ['fluxa','wallet','sidequest','paymentlink','checkin']):
-                print('SCHEMA',k,json.dumps(v)[:2200])
+          import requests,json
+          u='https://furryfragz-agent-earn-hub.vercel.app/status.json'
+          r=requests.get(u,timeout=16)
+          print('HTTP',r.status_code)
+          try:print('CHECKIN',json.dumps(r.json(),ensure_ascii=False)[:18000])
+          except Exception as e:print('INVALID_JSON',str(e)[:100])
           PY
