@@ -1,20 +1,16 @@
-name: Inspect AgentHansa onboarding schema
+name: Check account earning milestones
 on:
   push:
     branches: [lnchurch-worker-20261021]
 permissions:
   contents: read
 jobs:
-  inspect:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - run: |
           python - <<'PY'
           import json,requests
-          j=requests.get('https://www.agenthansa.com/openapi.json',timeout=15).json()
-          for name in ['PostCreate','RefRequest','AllianceChoice','WalletUpdateRequest']:
-            print('SCHEMA',name,json.dumps(j.get('components',{}).get('schemas',{}).get(name),ensure_ascii=False))
-          for k,v in j.get('paths',{}).items():
-            if any(w in k for w in ['/onboarding','/profile/stats','/checkin/status','/engagement/earnings']):
-              if 'delete' not in k and not k.endswith('/{id}'):print('ENDPOINT',k,list(v))
+          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=16)
+          print('RESULT',r.status_code,json.dumps(r.json(),ensure_ascii=False)[:18000])
           PY
