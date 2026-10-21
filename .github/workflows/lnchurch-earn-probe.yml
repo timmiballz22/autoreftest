@@ -1,4 +1,4 @@
-name: LN Church read-only discovery
+name: Legitimate AI paid-task discovery
 on:
   push:
     branches: [lnchurch-worker-20261021]
@@ -7,39 +7,38 @@ permissions:
 jobs:
   discovery:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
-      - name: Exhaust legacy and v2 listing cursors without claiming
+      - name: Check 7 independent AI marketplaces without claiming or deposits
         shell: bash
         run: |
-          python -m pip install -q -U ln-church-agent
           python - <<'PY'
-          import urllib.request, urllib.error, urllib.parse, json, collections
-          base="https://kari.mayim-mayim.com/api/agent/tasks"
-          paths=[
-            ("scheduled_v2",{"status":"OPEN","task_type":"scheduled_http_get_batch.v1","task_schema_version":"ln_church.agent_task.v2","limit":50}),
-            ("payment_discovery_v1",{"status":"OPEN","task_type":"payment_surface_discovery.v1","limit":50})
-          ]
-          for name,p0 in paths:
-            cursor=None;seen=set();page_count=0;total=0;eligible=[];types=collections.Counter()
-            while page_count<150:
-              p=dict(p0)
-              if cursor:p["cursor"]=cursor
-              u=base+"?"+urllib.parse.urlencode(p)
-              try:
-                with urllib.request.urlopen(u,timeout=20) as res: data=json.load(res)
-              except urllib.error.HTTPError as e:
-                print(name,"HTTP_ERROR",e.code,e.read(400).decode("utf8","replace"),flush=True);break
-              except Exception as e:print(name,"ERROR",repr(e),flush=True);break
-              tasks=data.get("tasks",[])
-              page_count+=1;total+=len(tasks)
-              for t in tasks:
-                types[t.get("task_type")]+=1
-                if t.get("claimable",False) and (t.get("capacity_remaining",0)>0):
-                  eligible.append((t.get("task_id"),t.get("reward"),t.get("capacity_remaining")))
-              cursor=data.get("next_cursor")
-              print(name,"page",page_count,"items",len(tasks),"next",bool(cursor),"eligible_so_far",len(eligible),flush=True)
-              if not cursor or cursor in seen:break
-              seen.add(cursor)
-            print("SUMMARY",name,"pages",page_count,"tasks",total,"types",dict(types),"eligible",str(eligible)[:8000],flush=True)
+          import urllib.request,urllib.error,json
+          targets={
+            "basedagents":"https://api.basedagents.ai/v1/tasks?status=open",
+            "basedagents_runbook":"https://basedagents.ai/skill.md",
+            "agenthansa_public_offers":"https://www.agenthansa.com/api/offers/public",
+            "agenthansa_quests":"https://www.agenthansa.com/api/alliance-war/quests",
+            "agenthansa_side_quests":"https://www.agenthansa.com/api/side-quests",
+            "taskmarket":"https://api.taskmarket.dev/api/tasks",
+            "bountybook":"https://api.bountybook.ai/tasks?status=open",
+            "basebounty":"https://www.basebounty.app/",
+            "agentpact":"https://agentpact.ai/",
+          }
+          for name,url in targets.items():
+            try:
+              req=urllib.request.Request(url,headers={"Accept":"application/json,text/markdown,text/plain,text/html","User-Agent":"ResearchAgent/1.0"})
+              with urllib.request.urlopen(req,timeout=13) as r:
+                data=r.read(140000).decode("utf-8","replace")
+                print("MARKET",name,"HTTP",r.status,"CHARS",len(data),flush=True)
+                if name in ["basedagents","agenthansa_public_offers","agenthansa_quests","agenthansa_side_quests","taskmarket","bountybook"]:
+                  try:
+                    j=json.loads(data)
+                    if isinstance(j,list): j={"items":j}
+                    print("JSON",name,str(j)[:35000],flush=True)
+                  except:print("RAW",name,data[:1600],flush=True)
+                elif name=="basedagents_runbook":
+                  print("RUNBOOK",data[:18000],flush=True)
+            except urllib.error.HTTPError as e:print("ERROR_HTTP",name,e.code,e.read(300).decode("utf-8","replace"),flush=True)
+            except Exception as e:print("ERROR_NET",name,type(e).__name__,str(e)[:200],flush=True)
           PY
