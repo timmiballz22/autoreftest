@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: Inspect survey report shape for valid honest answers
+      - name: Inspect report serializer
         shell: bash
         run: |
           python -m pip install -q -U ln-church-agent
@@ -17,7 +17,7 @@ jobs:
           import inspect
           from ln_church_agent import StructuredResponseClient
           c=StructuredResponseClient.prepare_answer.__globals__['c']
-          lines=inspect.getsource(c.validate_answer).splitlines()
-          print("VALIDATE_TAIL","\n".join(lines[42:]),flush=True)
-          print("DEFINITIONS",inspect.getsource(c.validate_definition_items)[-9000:],flush=True)
+          print("APS_REPORT",inspect.getsource(c._aps_report),flush=True)
+          for k in ("a1_2","a1_4","category","competitors"):
+            print("REPORT_FIELDS",k,getattr(c,"APS_REPORT_FIELDS",{}).get(k),flush=True)
           PY
