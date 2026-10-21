@@ -9,35 +9,44 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Install published SDK and inspect live task lists
+      - name: Inspect task details, guides and SDK signatures without claiming
         shell: bash
         run: |
-          python --version
-          python -m pip install -U ln-church-agent
+          python -m pip install -q -U ln-church-agent
           python - <<'PY'
-          import json, urllib.request, urllib.error, traceback
-          from importlib.metadata import version
-          print("SDK_VERSION", version("ln-church-agent"), flush=True)
-          base="https://kari.mayim-mayim.com"
-          endpoints=[
-            "/api/agent/tasks?limit=20",
-            "/api/agent/tasks?limit=20&task_schema_version=ln_church.agent_task.v2",
-            "/api/agent/tasks?status=OPEN&task_type=payment_surface_discovery.v1&limit=20"
-          ]
-          for path in endpoints:
-            try:
-              req=urllib.request.Request(base+path,headers={"Accept":"application/json","User-Agent":"ln-church-agent-earn-probe/1"})
-              with urllib.request.urlopen(req,timeout=25) as res:
-                print("HTTP", path, res.status, res.read(50000).decode("utf-8","replace"), flush=True)
-            except urllib.error.HTTPError as e:
-              print("HTTP_ERROR",path,e.code,e.read(5000).decode("utf-8","replace"),flush=True)
-            except Exception as e:
-              print("NETWORK_ERROR",path,type(e).__name__,str(e),flush=True)
+          import urllib.request, urllib.error, json, inspect
+          from ln_church_agent import AgentTaskClient
           try:
-            from ln_church_agent import AgentTaskClient
-            with AgentTaskClient() as c:
-              page=c.discover_tasks(limit=20)
-              print("SDK_DISCOVERY",str(page)[:6000],flush=True)
-          except Exception as e:
-            print("SDK_ERROR",repr(e),flush=True)
+            from ln_church_agent import StructuredResponseClient
+            print("STRUCTURED_METHODS")
+            for n in dir(StructuredResponseClient):
+              if n.startswith("_"): continue
+              a=getattr(StructuredResponseClient,n)
+              if callable(a):
+                try: print(n, str(inspect.signature(a)),(inspect.getdoc(a) or "")[:260])
+                except: pass
+          except Exception as e: print("CLIENT_IMPORT_ERROR",repr(e))
+          base="https://kari.mayim-mayim.com"
+          paths=[
+            "/api/agent/tasks/task_886d255e5a0c390f23a9382b6b57475c?task_type=structured_response.v3&task_schema_version=ln_church.agent_task.structured_response.v3",
+            "/agent-task-specs/structured_response.v3/3.0.0/SKILL.md",
+            "/api/agent/tasks?status=OPEN&task_type=endpoint_choice_reason.v2&limit=20",
+            "/api/agent/tasks?status=OPEN&task_type=url_choice_reason.v2&limit=20",
+            "/api/agent/tasks?status=OPEN&task_type=structured_response.v3&task_schema_version=ln_church.agent_task.structured_response.v3&limit=20",
+            "/api/agent/tasks?status=OPEN&task_type=scheduled_http_get_batch.v1&task_schema_version=ln_church.agent_task.v2&limit=20",
+            "/api/agent/tasks?status=OPEN&task_type=survey.v1&limit=20",
+          ]
+          for path in paths:
+            try:
+              with urllib.request.urlopen(urllib.request.Request(base+path,headers={"Accept":"application/json, text/markdown, text/plain"}),timeout=20) as res:
+                body=res.read(100000).decode("utf-8","replace")
+                if path.startswith("/api/agent/tasks?"):
+                  try:
+                    j=json.loads(body)
+                    body=json.dumps({"schema_version":j.get("schema_version"),"task_count":len(j.get("tasks",[])),"tasks":[{"id":t.get("task_id"),"type":t.get("task_type"),"title":t.get("title"),"status":t.get("status"),"claimable":t.get("claimable"),"remaining":t.get("capacity_remaining"),"reward":t.get("reward"),"schema":t.get("task_schema_version")} for t in j.get("tasks",[])],"next_cursor":j.get("next_cursor"),"error":j.get("error")})
+                  except Exception: pass
+                print("RESULT",res.status,path,body[:22000],flush=True)
+            except urllib.error.HTTPError as e:
+              print("ERROR_HTTP",e.code,path,e.read(1500).decode("utf-8","replace"),flush=True)
+            except Exception as e: print("ERROR_NET",type(e).__name__,repr(e),flush=True)
           PY
