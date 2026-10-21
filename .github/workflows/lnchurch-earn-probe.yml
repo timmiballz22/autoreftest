@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: Verify no ambiguity in survey local answer payload
+      - name: Inspect survey report shape for valid honest answers
         shell: bash
         run: |
           python -m pip install -q -U ln-church-agent
@@ -17,8 +17,7 @@ jobs:
           import inspect
           from ln_church_agent import StructuredResponseClient
           c=StructuredResponseClient.prepare_answer.__globals__['c']
-          print("VALIDATE_SOURCE",inspect.getsource(c.validate_answer),flush=True)
-          print("CLAIM_PATH",inspect.getsource(c.task_claim_path),flush=True)
-          for name in ("validate_item", "validate_profile", "validate_shared_assumptions"):
-            if hasattr(c,name):print("VALIDATE_PART",name,inspect.getsource(getattr(c,name))[:3500],flush=True)
+          lines=inspect.getsource(c.validate_answer).splitlines()
+          print("VALIDATE_TAIL","\n".join(lines[42:]),flush=True)
+          print("DEFINITIONS",inspect.getsource(c.validate_definition_items)[-9000:],flush=True)
           PY
