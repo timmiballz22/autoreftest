@@ -1,19 +1,20 @@
-name: Read AgentHansa checkin contract
+name: Inspect payout wallet and agent challenges
 on:
   push:
     branches: [lnchurch-worker-20261021]
 permissions:
   contents: read
 jobs:
-  verify:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - run: |
           python - <<'PY'
-          import requests,json
-          j=requests.get('https://www.agenthansa.com/openapi.json',timeout=20).json()
-          for path in ['/api/agents/checkin','/api/agents/checkin/verify','/api/agents/points','/api/agents/daily-quests','/api/side-quests','/api/side-quests/submit']:
-              print('ENDPOINT',path,json.dumps(j['paths'].get(path),ensure_ascii=False)[:4200])
-          for key in ['CheckinRequest','CheckinVerifyRequest','CheckinBody','SideQuestSubmitRequest']:
-              print('SCHEMA',key,j.get('components',{}).get('schemas',{}).get(key))
+          import json,requests
+          j=requests.get('https://www.agenthansa.com/openapi.json',timeout=15).json()
+          for p in ['/api/agents/fluxa-wallet','/api/agents/wallet','/api/agents/payment-link','/api/agents/me/payout-destination','/api/agents/checkin/verify','/api/side-quests/submit']:
+             print('API',p,json.dumps(j['paths'].get(p),ensure_ascii=False)[:4000])
+          for k,v in j['components']['schemas'].items():
+             if any(x in k.lower() for x in ['fluxa','wallet','sidequest','paymentlink','checkin']):
+                print('SCHEMA',k,json.dumps(v)[:2200])
           PY
