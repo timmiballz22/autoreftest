@@ -1,4 +1,4 @@
-name: Verify AgentHansa check-in details
+name: Agent checkin and earnings proof
 on:
   push:
     branches: [lnchurch-worker-20261021]
@@ -11,6 +11,6 @@ jobs:
       - run: |
           python - <<'PY'
           import requests,json
-          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=17)
-          print('REPORT',r.status_code,json.dumps(r.json(),ensure_ascii=False)[:15000])
+          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=19)
+          print('RESULT',r.status_code,json.dumps(r.json(),ensure_ascii=False)[:12500])
           PY
