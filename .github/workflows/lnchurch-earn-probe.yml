@@ -7,41 +7,39 @@ permissions:
 jobs:
   discovery:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - name: Cross-check claimable fixed-reward tasks across API families
+      - name: Exhaust legacy and v2 listing cursors without claiming
         shell: bash
         run: |
           python -m pip install -q -U ln-church-agent
           python - <<'PY'
-          import json, urllib.request, urllib.error, urllib.parse
+          import urllib.request, urllib.error, urllib.parse, json, collections
           base="https://kari.mayim-mayim.com/api/agent/tasks"
-          pairs=[
-            ("endpoint_choice_reason.v2", "ln_church.agent_task.endpoint_choice_reason.v2"),
-            ("endpoint_choice_reason.v2", "ln_church.agent_task.v2"),
-            ("url_choice_reason.v2", "ln_church.agent_task.url_choice_reason.v2"),
-            ("structured_response.v2", "ln_church.agent_task.structured_response.v2"),
-            ("structured_response.v3", "ln_church.agent_task.structured_response.v3"),
-            ("immediate_http_visit.v2", "ln_church.agent_task.immediate_visit.v2"),
-            ("scheduled_http_get_batch.v1", "ln_church.agent_task.v2"),
-            ("payment_surface_discovery.v1", "ln_church.agent_task.v1"),
+          paths=[
+            ("scheduled_v2",{"status":"OPEN","task_type":"scheduled_http_get_batch.v1","task_schema_version":"ln_church.agent_task.v2","limit":50}),
+            ("payment_discovery_v1",{"status":"OPEN","task_type":"payment_surface_discovery.v1","limit":50})
           ]
-          for kind,schema in pairs:
-            params=urllib.parse.urlencode({"task_type":kind,"task_schema_version":schema,"status":"OPEN","limit":20})
-            path=base+"?"+params
-            try:
-              with urllib.request.urlopen(path,timeout=15) as r:
-                data=json.loads(r.read(200000))
-                tasks=data.get("tasks",[])
-                print("FAMILY",kind,schema,"HTTP",r.status,"COUNT",len(tasks),"CURSOR",bool(data.get("next_cursor")),flush=True)
-                for t in tasks:print("TASK",t.get("task_id"),"claimed",t.get("claimable"),"capacity",t.get("capacity_remaining"),"reward",t.get("reward"),flush=True)
-            except urllib.error.HTTPError as e: print("FAMILY_ERROR",kind,schema,e.code,e.read(400).decode("utf-8","replace"),flush=True)
-            except Exception as e: print("FAMILY_NET_ERROR",kind,repr(e),flush=True)
-          from ln_church_agent import AgentTaskClient, StructuredResponseClient
-          for clazz in (AgentTaskClient,StructuredResponseClient):
-            try:
-              with clazz() as c:
-                p=c.list_tasks(limit=20)
-                print("SDK_LIST",clazz.__name__,str(p)[:2000],flush=True)
-            except Exception as e: print("SDK_LIST_ERROR",clazz.__name__,type(e).__name__,str(e)[:600],flush=True)
+          for name,p0 in paths:
+            cursor=None;seen=set();page_count=0;total=0;eligible=[];types=collections.Counter()
+            while page_count<150:
+              p=dict(p0)
+              if cursor:p["cursor"]=cursor
+              u=base+"?"+urllib.parse.urlencode(p)
+              try:
+                with urllib.request.urlopen(u,timeout=20) as res: data=json.load(res)
+              except urllib.error.HTTPError as e:
+                print(name,"HTTP_ERROR",e.code,e.read(400).decode("utf8","replace"),flush=True);break
+              except Exception as e:print(name,"ERROR",repr(e),flush=True);break
+              tasks=data.get("tasks",[])
+              page_count+=1;total+=len(tasks)
+              for t in tasks:
+                types[t.get("task_type")]+=1
+                if t.get("claimable",False) and (t.get("capacity_remaining",0)>0):
+                  eligible.append((t.get("task_id"),t.get("reward"),t.get("capacity_remaining")))
+              cursor=data.get("next_cursor")
+              print(name,"page",page_count,"items",len(tasks),"next",bool(cursor),"eligible_so_far",len(eligible),flush=True)
+              if not cursor or cursor in seen:break
+              seen.add(cursor)
+            print("SUMMARY",name,"pages",page_count,"tasks",total,"types",dict(types),"eligible",str(eligible)[:8000],flush=True)
           PY
