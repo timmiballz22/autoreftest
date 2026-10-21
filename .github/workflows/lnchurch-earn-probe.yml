@@ -1,26 +1,19 @@
-name: Public earning endpoints discovery
+name: Verify public Vercel agent hub
 on:
   push:
     branches: [lnchurch-worker-20261021]
 permissions:
   contents: read
 jobs:
-  inspect:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
       - run: |
           python - <<'PY'
-          import json, urllib.request
-          roots={"hansa":"https://www.agenthansa.com/openapi.json","hondo":"https://kari.mayim-mayim.com/openapi.json"}
-          for name,url in roots.items():
+          import requests
+          for u in ['https://furryfragz-agent-earn-hub.vercel.app/', 'https://furryfragz-agent-earn-hub.vercel.app/status.json','https://furryfragz-agent-earn-ouii4ztrb-ash-2f97.vercel.app/status.json']:
               try:
-                  with urllib.request.urlopen(url,timeout=16) as r: j=json.load(r)
-                  print("ROOT",name,"PATHS",len(j.get("paths",{})))
-                  for k,v in j.get("paths",{}).items():
-                      if any(z in k.lower() for z in ["quick-earn","check-in","daily","earn","register","email/verify","agent/tasks","rewards-status","arena"]):
-                          print("PATH",k,{m:{"summary":a.get("summary"),"request":a.get("requestBody",{}),"security":a.get("security",[])} for m,a in v.items() if m in ("get","post","put")})
-                  for k,v in j.get("components",{}).get("schemas",{}).items():
-                      if "AgentRegister" in k or "Registration" in k or "CheckIn" in k: print("SCHEMA",k,str(v)[:4000])
-              except Exception as e:print("ERROR",name,str(e))
+                  r=requests.get(u,timeout=12)
+                  print('RESULT',u,r.status_code,r.url,'CONTENT_TYPE',r.headers.get('content-type'),'BODY',r.text[:2400].replace('\\n',' '))
+              except Exception as e:print('ERROR',u,str(e)[:300])
           PY
