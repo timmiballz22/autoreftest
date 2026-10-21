@@ -9,41 +9,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Rank actual paid opportunities without risking deposits
+      - name: Check no-fee fast-paid tasks and onboarding rules
         shell: bash
         run: |
           python - <<'PY'
           import json,urllib.request,urllib.error
-          urlmap={
-            "basedagents":"https://api.basedagents.ai/v1/tasks?status=open",
-            "agenthansa_offers":"https://www.agenthansa.com/api/offers/public",
-            "agenthansa_quests":"https://www.agenthansa.com/api/alliance-war/quests",
-            "taskmarket":"https://api.taskmarket.dev/api/tasks"
-          }
-          for name,url in urlmap.items():
+          H={"Accept":"application/json, text/plain, text/markdown","User-Agent":"AIRevenueScout/1.0 (+public-safe research)"}
+          items=[
+             ("BA", "https://api.basedagents.ai/v1/tasks?status=open"),
+             ("BA_Guide","https://basedagents.ai/skill.md"),
+             ("AH_Docs","https://www.agenthansa.com/llms.txt"),
+             ("AH_OpenAPI","https://www.agenthansa.com/openapi.json"),
+             ("AH_Community","https://www.agenthansa.com/api/community/tasks"),
+             ("AH_Collective","https://www.agenthansa.com/api/collective/bounties/public"),
+             ("AH_Red","https://www.agenthansa.com/api/red-packets")
+          ]
+          for name,url in items:
             try:
-              with urllib.request.urlopen(url,timeout=20) as r:j=json.loads(r.read(200000))
-            except Exception as e:print("ERROR",name,str(e)[:150],flush=True);continue
-            if name=="basedagents":
-              t=j.get("tasks",[])
-              print("COUNT",name,len(t))
-              for x in t:
-                b=x.get("bounty") or {}
-                if not b and not x.get("bounty_amount"):continue
-                print("BA",x.get("task_id"),repr(x.get("title"))[:90],"PAY",b.get("amount_display") or x.get("bounty_amount"),"FUNDED", (x.get("escrow") or {}).get("status"),"CLAIM",x.get("claimable"),"NETWORK",b.get("network"),"PREQ",repr(x.get("description"))[:210],flush=True)
-            elif name=="taskmarket":
-              t=j.get("tasks",[])
-              print("COUNT",name,len(t))
-              for x in t:
-                if x.get("status")=="open" and x.get("submissionWindowOpen") and not x.get("stakeRequired"):
-                  print("TM",x.get("id"),x.get("referenceCode"),"REWARD",x.get("reward"),"MODE",x.get("mode"),"EXPIRES",x.get("expiryTime"),"DESC",repr(x.get("description"))[:420],flush=True)
-            elif name=="agenthansa_quests":
-              print("QUEST_KEYS",list(j)[:20],"QUOTA",j.get("pagination"),flush=True)
-              for k,v in j.items():
-                if isinstance(v,list):
-                  print("QUEST_ARRAY",k,len(v))
-                  for x in v[:30]:
-                    print("AHQ",str({f:x.get(f) for f in ["id","title","status","type","reward_amount","reward","prize_usdc","submission_count","deadline","ends_at"]}),flush=True)
-            else:
-              print("OFFER_KEYS",list(j)[:25] if isinstance(j,dict) else "list","RAW",str(j)[:3500],flush=True)
+              with urllib.request.urlopen(urllib.request.Request(url,headers=H),timeout=20) as r:
+                raw=r.read(1500000).decode("utf-8","replace")
+              print("OK",name,"SIZE",len(raw),flush=True)
+              if name=="AH_OpenAPI":
+                data=json.loads(raw)
+                for p in ["/api/agents/register","/api/agents/challenge","/api/agents/wallet","/api/agents/me/payout-destination","/api/agents/request-payout","/api/agents/work"]:
+                  print("API",p,str(data.get("paths",{}).get(p))[:4800],flush=True)
+                for k,v in data.get("components",{}).get("schemas",{}).items():
+                  if any(x in k.lower() for x in ("registeragent","registration","payout","wallet","agentcreate")): print("SCHEMA",k,str(v)[:2500],flush=True)
+              elif name=="BA":
+                data=json.loads(raw)
+                for x in data.get("tasks",[]):
+                  if x.get("bounty_amount") is None:continue
+                  print("BAPAY",x.get("task_id"),repr(x.get("title"))[:100],"bounty",x.get("bounty_amount"),"escrow",x.get("escrow"),"network",x.get("bounty_network"),"description",repr(x.get("description"))[:400],flush=True)
+              elif name in ("AH_Community","AH_Collective","AH_Red"):
+                data=json.loads(raw)
+                print("H_DATA",name,str(data)[:12000],flush=True)
+              else:
+                selected=[l for l in raw.splitlines() if any(y in l.lower() for y in ["register","bonus","payout","withdraw","wallet","instant","checkin","quick earn","survey","task"])]
+                print("GUIDE",name,"\n".join(selected)[:16000],flush=True)
+            except urllib.error.HTTPError as e:print("HTTP",name,e.code,e.read(180).decode("utf-8","replace"),flush=True)
+            except Exception as e:print("ERROR",name,str(e)[:400],flush=True)
           PY
