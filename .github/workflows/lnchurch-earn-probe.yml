@@ -9,20 +9,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
-      - name: Inspect survey SDK answer representation without claiming
+      - name: Verify no ambiguity in survey local answer payload
         shell: bash
         run: |
           python -m pip install -q -U ln-church-agent
           python - <<'PY'
-          import inspect,ln_church_agent
+          import inspect
           from ln_church_agent import StructuredResponseClient
-          for name in ("claim","prepare_answer","get_context","submit"):
-            try:
-              print("SOURCE",name,inspect.getsource(getattr(StructuredResponseClient,name))[:9000],flush=True)
-            except Exception as e: print("SOURCE_ERR",name,str(e))
-          for n in dir(ln_church_agent):
-            if any(s in n for s in ("StructuredResponse","PreparedAnswer","AnswerItem","Survey")):
-              obj=getattr(ln_church_agent,n)
-              try:print("CLASS",n,"FIELDS",getattr(obj,"model_fields",None),flush=True)
-              except: pass
+          c=StructuredResponseClient.prepare_answer.__globals__['c']
+          print("VALIDATE_SOURCE",inspect.getsource(c.validate_answer),flush=True)
+          print("CLAIM_PATH",inspect.getsource(c.task_claim_path),flush=True)
+          for name in ("validate_item", "validate_profile", "validate_shared_assumptions"):
+            if hasattr(c,name):print("VALIDATE_PART",name,inspect.getsource(getattr(c,name))[:3500],flush=True)
           PY
