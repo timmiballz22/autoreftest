@@ -7,22 +7,22 @@ permissions:
 jobs:
   discovery:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 6
     steps:
-      - name: Read complete remaining items and SDK request schemas
+      - name: Inspect survey SDK answer representation without claiming
         shell: bash
         run: |
           python -m pip install -q -U ln-church-agent
           python - <<'PY'
-          import urllib.request,json,inspect
+          import inspect,ln_church_agent
           from ln_church_agent import StructuredResponseClient
-          u="https://kari.mayim-mayim.com/api/agent/tasks/task_886d255e5a0c390f23a9382b6b57475c?task_type=structured_response.v3&task_schema_version=ln_church.agent_task.structured_response.v3"
-          with urllib.request.urlopen(u,timeout=15) as r:j=json.load(r)
-          print("AVAILABLE",j.get("capacity_available"),"PAID_CONFIRMED",j.get("rewards_paid_confirmed"),flush=True)
-          for x in j.get("items",[]):
-            if x.get("axis",9)>4 or "axis" not in x:
-              print("ITEM",x.get("item_id"),"axis",x.get("axis"),"keys",list(x),"statuses",x.get("allowed_statuses"),"q",x.get("question",{}).get("en"),flush=True)
-          for n in ("claim","get_context","prepare_answer","submit","get_submission_status","recover_completion"):
-            fn=getattr(StructuredResponseClient,n)
-            print("METHOD",n,inspect.signature(fn),"DOC",(inspect.getdoc(fn) or "")[:1000],flush=True)
+          for name in ("claim","prepare_answer","get_context","submit"):
+            try:
+              print("SOURCE",name,inspect.getsource(getattr(StructuredResponseClient,name))[:9000],flush=True)
+            except Exception as e: print("SOURCE_ERR",name,str(e))
+          for n in dir(ln_church_agent):
+            if any(s in n for s in ("StructuredResponse","PreparedAnswer","AnswerItem","Survey")):
+              obj=getattr(ln_church_agent,n)
+              try:print("CLASS",n,"FIELDS",getattr(obj,"model_fields",None),flush=True)
+              except: pass
           PY
