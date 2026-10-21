@@ -1,19 +1,23 @@
-name: Verify public Vercel agent hub
+name: Verify agent account enrollment
 on:
   push:
     branches: [lnchurch-worker-20261021]
 permissions:
   contents: read
 jobs:
-  check:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - run: |
           python - <<'PY'
-          import requests
-          for u in ['https://furryfragz-agent-earn-hub.vercel.app/', 'https://furryfragz-agent-earn-hub.vercel.app/status.json','https://furryfragz-agent-earn-ouii4ztrb-ash-2f97.vercel.app/status.json']:
-              try:
-                  r=requests.get(u,timeout=12)
-                  print('RESULT',u,r.status_code,r.url,'CONTENT_TYPE',r.headers.get('content-type'),'BODY',r.text[:2400].replace('\\n',' '))
-              except Exception as e:print('ERROR',u,str(e)[:300])
+          import requests,json
+          u='https://furryfragz-agent-earn-hub.vercel.app/status.json'
+          try:
+              r=requests.get(u,timeout=20)
+              print('HTTP',r.status_code)
+              d=r.json()
+              print('CHECKED',d.get('checked_at'))
+              for k,v in d.get('services',{}).items():
+                  print('SERVICE',k,json.dumps(v,ensure_ascii=False)[:24000])
+          except Exception as e:print('ERROR',str(e)[:900])
           PY
