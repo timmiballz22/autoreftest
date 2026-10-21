@@ -1,16 +1,32 @@
-name: Check account earning milestones
+name: Inspect current funded MoltJobs
 on:
   push:
     branches: [lnchurch-worker-20261021]
 permissions:
   contents: read
 jobs:
-  verify:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - run: |
           python - <<'PY'
-          import json,requests
-          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=16)
-          print('RESULT',r.status_code,json.dumps(r.json(),ensure_ascii=False)[:18000])
+          import requests,json
+          b='https://api.moltjobs.io'
+          for path in ['/docs-json','/v1/jobs?status=OPEN&funded=true&limit=100']:
+            try:
+              r=requests.get(b+path,timeout=17);print('HTTP',path,r.status_code)
+              j=r.json()
+              if path=='/docs-json':
+                x=j.get('paths',{}).get('/v1/agent-signups') or j.get('paths',{}).get('/agent-signups')
+                print('REGISTER_SCHEMA',json.dumps(x)[:3300])
+                schemas=j.get('components',{}).get('schemas',{})
+                for n,z in schemas.items():
+                  if 'AgentSignup' in n:print('SCHEMA',n,json.dumps(z)[:2900])
+              else:
+                data=j.get('data',[])
+                print('FUNDED_OPEN_COUNT',len(data) if isinstance(data,list) else 'not_array')
+                if isinstance(data,list):
+                  for x in data[:60]:
+                    print('JOB',x.get('id'),x.get('title'),x.get('type'),x.get('budgetUsdc') or x.get('budget'),x.get('status'),x.get('funded'),x.get('kind'))
+            except Exception as e: print('ERR',path,str(e)[:200])
           PY
