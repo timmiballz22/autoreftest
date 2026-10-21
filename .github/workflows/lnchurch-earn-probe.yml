@@ -1,4 +1,4 @@
-name: Legitimate AI paid-task discovery
+name: Agent-native survey readiness
 on:
   push:
     branches: [lnchurch-worker-20261021]
@@ -7,45 +7,24 @@ permissions:
 jobs:
   discovery:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 7
     steps:
-      - name: Check no-fee fast-paid tasks and onboarding rules
+      - name: Read all live paid survey questions before any claim
         shell: bash
         run: |
+          python -m pip install -q -U ln-church-agent
           python - <<'PY'
-          import json,urllib.request,urllib.error
-          H={"Accept":"application/json, text/plain, text/markdown","User-Agent":"AIRevenueScout/1.0 (+public-safe research)"}
-          items=[
-             ("BA", "https://api.basedagents.ai/v1/tasks?status=open"),
-             ("BA_Guide","https://basedagents.ai/skill.md"),
-             ("AH_Docs","https://www.agenthansa.com/llms.txt"),
-             ("AH_OpenAPI","https://www.agenthansa.com/openapi.json"),
-             ("AH_Community","https://www.agenthansa.com/api/community/tasks"),
-             ("AH_Collective","https://www.agenthansa.com/api/collective/bounties/public"),
-             ("AH_Red","https://www.agenthansa.com/api/red-packets")
-          ]
-          for name,url in items:
-            try:
-              with urllib.request.urlopen(urllib.request.Request(url,headers=H),timeout=20) as r:
-                raw=r.read(1500000).decode("utf-8","replace")
-              print("OK",name,"SIZE",len(raw),flush=True)
-              if name=="AH_OpenAPI":
-                data=json.loads(raw)
-                for p in ["/api/agents/register","/api/agents/challenge","/api/agents/wallet","/api/agents/me/payout-destination","/api/agents/request-payout","/api/agents/work"]:
-                  print("API",p,str(data.get("paths",{}).get(p))[:4800],flush=True)
-                for k,v in data.get("components",{}).get("schemas",{}).items():
-                  if any(x in k.lower() for x in ("registeragent","registration","payout","wallet","agentcreate")): print("SCHEMA",k,str(v)[:2500],flush=True)
-              elif name=="BA":
-                data=json.loads(raw)
-                for x in data.get("tasks",[]):
-                  if x.get("bounty_amount") is None:continue
-                  print("BAPAY",x.get("task_id"),repr(x.get("title"))[:100],"bounty",x.get("bounty_amount"),"escrow",x.get("escrow"),"network",x.get("bounty_network"),"description",repr(x.get("description"))[:400],flush=True)
-              elif name in ("AH_Community","AH_Collective","AH_Red"):
-                data=json.loads(raw)
-                print("H_DATA",name,str(data)[:12000],flush=True)
-              else:
-                selected=[l for l in raw.splitlines() if any(y in l.lower() for y in ["register","bonus","payout","withdraw","wallet","instant","checkin","quick earn","survey","task"])]
-                print("GUIDE",name,"\n".join(selected)[:16000],flush=True)
-            except urllib.error.HTTPError as e:print("HTTP",name,e.code,e.read(180).decode("utf-8","replace"),flush=True)
-            except Exception as e:print("ERROR",name,str(e)[:400],flush=True)
+          import urllib.request,json,inspect,ln_church_agent
+          base="https://kari.mayim-mayim.com"
+          tid="task_886d255e5a0c390f23a9382b6b57475c"
+          u=base+"/api/agent/tasks/"+tid+"?task_type=structured_response.v3&task_schema_version=ln_church.agent_task.structured_response.v3"
+          with urllib.request.urlopen(u,timeout=15) as r:j=json.load(r)
+          print("TASK",j.get("task_id"),"TITLE",j.get("title"),"REWARD",j.get("reward"),"PARTICIPATION",j.get("participation"))
+          for k,v in j.items():
+            if k not in ("items",): print("TOP",k,str(v)[:1000])
+          for x in j.get("items",[]):
+            print("ITEM",x["item_id"],"axis",x["axis"],"kind",x["kind"],"statuses",x.get("allowed_statuses"),"question",x.get("question",{}).get("en"),flush=True)
+          for cls in (ln_church_agent.StructuredResponseClient,):
+            for n in ("claim","get_context","prepare_answer","submit"):
+              fn=getattr(cls,n);print("METHOD",n,inspect.signature(fn),inspect.getdoc(fn),flush=True)
           PY
