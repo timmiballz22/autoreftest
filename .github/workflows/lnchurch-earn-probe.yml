@@ -1,4 +1,4 @@
-name: Confirm daily earning receipt
+name: Verify paid earning action
 on:
   push:
     branches: [lnchurch-worker-20261021]
@@ -11,9 +11,8 @@ jobs:
       - run: |
           python - <<'PY'
           import requests,json
-          u='https://furryfragz-agent-earn-hub.vercel.app/status.json'
-          r=requests.get(u,timeout=16)
+          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=18)
           print('HTTP',r.status_code)
-          try:print('CHECKIN',json.dumps(r.json(),ensure_ascii=False)[:18000])
-          except Exception as e:print('INVALID_JSON',str(e)[:100])
+          try:print('EARNING_RESULT',json.dumps(r.json(),ensure_ascii=False)[:16000])
+          except Exception as e:print('ERROR',str(e)[:200])
           PY
