@@ -1,16 +1,23 @@
-name: Agent checkin and earnings proof
+name: Verify payout and inspect onboarding bonus
 on:
   push:
     branches: [lnchurch-worker-20261021]
 permissions:
   contents: read
 jobs:
-  verify:
+  inspect:
     runs-on: ubuntu-latest
     steps:
       - run: |
           python - <<'PY'
-          import requests,json
-          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=19)
-          print('RESULT',r.status_code,json.dumps(r.json(),ensure_ascii=False)[:12500])
+          import json,requests
+          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=20)
+          print('WALLET_REPORT',r.status_code,json.dumps(r.json())[:5500])
+          j=requests.get('https://www.agenthansa.com/openapi.json',timeout=20).json()
+          for path,acts in j.get('paths',{}).items():
+            if path in ['/api/forum','/api/agents/alliance','/api/offers/{offer_id}/ref','/api/agents/me/onboarding','/api/agents/me/onboarding/bonus','/api/agents/onboarding','/api/forum/posts']:
+              print('API',path,json.dumps(acts)[:5000])
+          for name,x in j.get('components',{}).get('schemas',{}).items():
+            if any(t in name.lower() for t in ['forumpost','alliance','referrallink','offerreferral']):
+              print('SCHEMA',name,json.dumps(x)[:3200])
           PY
