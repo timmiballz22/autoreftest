@@ -1,0 +1,43 @@
+name: LN Church read-only discovery
+on:
+  push:
+    branches: [lnchurch-worker-20261021]
+permissions:
+  contents: read
+jobs:
+  discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Install published SDK and inspect live task lists
+        shell: bash
+        run: |
+          python --version
+          python -m pip install -U ln-church-agent
+          python - <<'PY'
+          import json, urllib.request, urllib.error, traceback
+          from importlib.metadata import version
+          print("SDK_VERSION", version("ln-church-agent"), flush=True)
+          base="https://kari.mayim-mayim.com"
+          endpoints=[
+            "/api/agent/tasks?limit=20",
+            "/api/agent/tasks?limit=20&task_schema_version=ln_church.agent_task.v2",
+            "/api/agent/tasks?status=OPEN&task_type=payment_surface_discovery.v1&limit=20"
+          ]
+          for path in endpoints:
+            try:
+              req=urllib.request.Request(base+path,headers={"Accept":"application/json","User-Agent":"ln-church-agent-earn-probe/1"})
+              with urllib.request.urlopen(req,timeout=25) as res:
+                print("HTTP", path, res.status, res.read(50000).decode("utf-8","replace"), flush=True)
+            except urllib.error.HTTPError as e:
+              print("HTTP_ERROR",path,e.code,e.read(5000).decode("utf-8","replace"),flush=True)
+            except Exception as e:
+              print("NETWORK_ERROR",path,type(e).__name__,str(e),flush=True)
+          try:
+            from ln_church_agent import AgentTaskClient
+            with AgentTaskClient() as c:
+              page=c.discover_tasks(limit=20)
+              print("SDK_DISCOVERY",str(page)[:6000],flush=True)
+          except Exception as e:
+            print("SDK_ERROR",repr(e),flush=True)
+          PY
