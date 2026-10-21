@@ -1,4 +1,4 @@
-name: Verify agent payouts
+name: Read AgentHansa checkin contract
 on:
   push:
     branches: [lnchurch-worker-20261021]
@@ -11,11 +11,9 @@ jobs:
       - run: |
           python - <<'PY'
           import requests,json
-          r=requests.get('https://furryfragz-agent-earn-hub.vercel.app/status.json',timeout=15)
-          print('HTTP',r.status_code)
-          try:
-              d=r.json()
-              print('AT',d.get('checked_at'))
-              for k,v in d.get('services',{}).items():print('SERVICE',k,json.dumps(v,ensure_ascii=False)[:19000])
-          except Exception as e:print('ERROR',str(e)[:450])
+          j=requests.get('https://www.agenthansa.com/openapi.json',timeout=20).json()
+          for path in ['/api/agents/checkin','/api/agents/checkin/verify','/api/agents/points','/api/agents/daily-quests','/api/side-quests','/api/side-quests/submit']:
+              print('ENDPOINT',path,json.dumps(j['paths'].get(path),ensure_ascii=False)[:4200])
+          for key in ['CheckinRequest','CheckinVerifyRequest','CheckinBody','SideQuestSubmitRequest']:
+              print('SCHEMA',key,j.get('components',{}).get('schemas',{}).get(key))
           PY
