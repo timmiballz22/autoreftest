@@ -9,44 +9,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Inspect task details, guides and SDK signatures without claiming
+      - name: Cross-check claimable fixed-reward tasks across API families
         shell: bash
         run: |
           python -m pip install -q -U ln-church-agent
           python - <<'PY'
-          import urllib.request, urllib.error, json, inspect
-          from ln_church_agent import AgentTaskClient
-          try:
-            from ln_church_agent import StructuredResponseClient
-            print("STRUCTURED_METHODS")
-            for n in dir(StructuredResponseClient):
-              if n.startswith("_"): continue
-              a=getattr(StructuredResponseClient,n)
-              if callable(a):
-                try: print(n, str(inspect.signature(a)),(inspect.getdoc(a) or "")[:260])
-                except: pass
-          except Exception as e: print("CLIENT_IMPORT_ERROR",repr(e))
-          base="https://kari.mayim-mayim.com"
-          paths=[
-            "/api/agent/tasks/task_886d255e5a0c390f23a9382b6b57475c?task_type=structured_response.v3&task_schema_version=ln_church.agent_task.structured_response.v3",
-            "/agent-task-specs/structured_response.v3/3.0.0/SKILL.md",
-            "/api/agent/tasks?status=OPEN&task_type=endpoint_choice_reason.v2&limit=20",
-            "/api/agent/tasks?status=OPEN&task_type=url_choice_reason.v2&limit=20",
-            "/api/agent/tasks?status=OPEN&task_type=structured_response.v3&task_schema_version=ln_church.agent_task.structured_response.v3&limit=20",
-            "/api/agent/tasks?status=OPEN&task_type=scheduled_http_get_batch.v1&task_schema_version=ln_church.agent_task.v2&limit=20",
-            "/api/agent/tasks?status=OPEN&task_type=survey.v1&limit=20",
+          import json, urllib.request, urllib.error, urllib.parse
+          base="https://kari.mayim-mayim.com/api/agent/tasks"
+          pairs=[
+            ("endpoint_choice_reason.v2", "ln_church.agent_task.endpoint_choice_reason.v2"),
+            ("endpoint_choice_reason.v2", "ln_church.agent_task.v2"),
+            ("url_choice_reason.v2", "ln_church.agent_task.url_choice_reason.v2"),
+            ("structured_response.v2", "ln_church.agent_task.structured_response.v2"),
+            ("structured_response.v3", "ln_church.agent_task.structured_response.v3"),
+            ("immediate_http_visit.v2", "ln_church.agent_task.immediate_visit.v2"),
+            ("scheduled_http_get_batch.v1", "ln_church.agent_task.v2"),
+            ("payment_surface_discovery.v1", "ln_church.agent_task.v1"),
           ]
-          for path in paths:
+          for kind,schema in pairs:
+            params=urllib.parse.urlencode({"task_type":kind,"task_schema_version":schema,"status":"OPEN","limit":20})
+            path=base+"?"+params
             try:
-              with urllib.request.urlopen(urllib.request.Request(base+path,headers={"Accept":"application/json, text/markdown, text/plain"}),timeout=20) as res:
-                body=res.read(100000).decode("utf-8","replace")
-                if path.startswith("/api/agent/tasks?"):
-                  try:
-                    j=json.loads(body)
-                    body=json.dumps({"schema_version":j.get("schema_version"),"task_count":len(j.get("tasks",[])),"tasks":[{"id":t.get("task_id"),"type":t.get("task_type"),"title":t.get("title"),"status":t.get("status"),"claimable":t.get("claimable"),"remaining":t.get("capacity_remaining"),"reward":t.get("reward"),"schema":t.get("task_schema_version")} for t in j.get("tasks",[])],"next_cursor":j.get("next_cursor"),"error":j.get("error")})
-                  except Exception: pass
-                print("RESULT",res.status,path,body[:22000],flush=True)
-            except urllib.error.HTTPError as e:
-              print("ERROR_HTTP",e.code,path,e.read(1500).decode("utf-8","replace"),flush=True)
-            except Exception as e: print("ERROR_NET",type(e).__name__,repr(e),flush=True)
+              with urllib.request.urlopen(path,timeout=15) as r:
+                data=json.loads(r.read(200000))
+                tasks=data.get("tasks",[])
+                print("FAMILY",kind,schema,"HTTP",r.status,"COUNT",len(tasks),"CURSOR",bool(data.get("next_cursor")),flush=True)
+                for t in tasks:print("TASK",t.get("task_id"),"claimed",t.get("claimable"),"capacity",t.get("capacity_remaining"),"reward",t.get("reward"),flush=True)
+            except urllib.error.HTTPError as e: print("FAMILY_ERROR",kind,schema,e.code,e.read(400).decode("utf-8","replace"),flush=True)
+            except Exception as e: print("FAMILY_NET_ERROR",kind,repr(e),flush=True)
+          from ln_church_agent import AgentTaskClient, StructuredResponseClient
+          for clazz in (AgentTaskClient,StructuredResponseClient):
+            try:
+              with clazz() as c:
+                p=c.list_tasks(limit=20)
+                print("SDK_LIST",clazz.__name__,str(p)[:2000],flush=True)
+            except Exception as e: print("SDK_LIST_ERROR",clazz.__name__,type(e).__name__,str(e)[:600],flush=True)
           PY
