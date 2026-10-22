@@ -1,4 +1,4 @@
-name: Inspect verified AgentHansa check-in result
+name: Frantic public bounty eligibility verification
 on:
   push:
     branches: [lnchurch-worker-20261021]
@@ -7,12 +7,17 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
+    timeout-minutes: 4
     steps:
-      - run: |
+      - name: Inspect public Frantic agent contract and funded tasks
+        run: |
           python - <<'PY'
           import requests
-          url='https://furryfragz-agent-earn-61fmh1dui-ash-2f97.vercel.app/checkin-status.json'
-          r=requests.get(url, timeout=20)
-          print('HTTP',r.status_code)
-          print(r.text[:1200])
+          urls=['https://gofrantic.com/SKILL.md','https://gofrantic.com/v1/bounties','https://gofrantic.com/v1/board','https://gofrantic.com/bounties/139','https://gofrantic.com/bounties/140','https://gofrantic.com/bounties/141','https://api.gofrantic.com/mcp.json','https://gofrantic.com/openapi.json']
+          for u in urls:
+            try:
+              r=requests.get(u,timeout=18,headers={'Accept':'application/json,text/markdown,text/plain,text/html'})
+              t=r.text
+              print('PROBE',u,'STATUS',r.status_code,'LENGTH',len(t),'BODY',t[:12500] if '/SKILL.md' in u else t[:4000])
+            except Exception as e:print('PROBE_ERR',u,str(e)[:150])
           PY
