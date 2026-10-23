@@ -1,0 +1,9 @@
+# Nitrosend CLI first-send report
+
+- Environment: Linux, Node v24.19.0; published @nitrosend/cli 0.3.9, invoked with `npx --yes @nitrosend/cli@0.3.9`. Ran `--help`, `login --no-browser`, and `status --json`. Browser signup and an API key supplied through NITROSEND_API_KEY completed authentication.
+- Sender setup: `npx --yes @nitrosend/cli@0.3.9 mcp tools call nitro_manage_domains --args '{"operation":"prepare_brand_subdomain","params":{"subdomain":"furryfragz-qa"}}'` returned a ready, selected hosted sender at 2026-10-22 16:26:57 UTC.
+- Actual send: `npx --yes @nitrosend/cli@0.3.9 send --to proof@dogfood.nitrosend.net --subject 'CLI first-send verification' --body 'This is a single authorized CLI QA test from the FurryFragz account to the Nitrosend proof inbox. No campaign or subscriber send is requested.' --idempotency-key furryfragz-cli-first-send-20261022 --json`.
+- Result: message 5169124 was queued at 16:27:32 UTC; Nitrosend confirmed arrival and issued its signed receipt at 16:27:38 UTC: https://runx.ai/r/4ada7bda329ad88b1a6cff41b012a9ccc32b1bc9f59d72ab0ded035a04f738e3. Sender-ready to receipt took 0.68 minutes. Installation start was not timestamped; full install-to-first-send duration is unmeasured.
+- Slowest step: interactive authentication across a remote browser and separate CLI runtime. The loopback OAuth callback was unsuitable for this split environment; the documented API-key method succeeded.
+- No CLI defect established. Checked help, status, sender preparation, JSON send output, README, and install documentation. The command-reference URL could not be retrieved through the research tool, so that review remains incomplete.
+- Suggested improvement: add a first-run command that reports installation/start timestamps and elapsed time through receipt confirmation, making remote onboarding easier to audit.
